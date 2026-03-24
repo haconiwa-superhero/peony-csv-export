@@ -1,285 +1,204 @@
 require('dotenv').config();
 const express = require('express');
-const crypto = require('crypto');
-const fetch = require('node-fetch');
+const multer = require('multer');
 const iconv = require('iconv-lite');
 
 const app = express();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
 app.use(express.static('public'));
 
-const CLIENT_ID = process.env.SHOPIFY_CLIENT_ID;
-const CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
-const HOST = process.env.HOST; // e.g., https://your-app.onrender.com
-const SCOPES = 'read_orders';
-
-let shopDomain = process.env.SHOPIFY_SHOP || '';
-let accessToken = process.env.SHOPIFY_ACCESS_TOKEN || '';
+// ============================================================
+// SKUマップ（商品オプション値 → SKUコード）
+// ============================================================
+const SKU_MAP = {
+  "GLOW OF LOVE HIGHLIGHTER 01": "GOH01 card sets",
+  "GLOW OF LOVE HIGHLIGHTER 02": "GOH02-02",
+  "GLOW OF LOVE HIGHLIGHTER 03": "GOH03",
+  "GLOW OF LOVE HIGHLIGHTER 04": "GOH04",
+  "MARSHMALLOW TOUCH CHEEK 01": "MTC01",
+  "MARSHMALLOW TOUCH CHEEK 02": "MTC02",
+  "MARSHMALLOW TOUCH CHEEK 03": "MTC03",
+  "MARSHMALLOW TOUCH CHEEK 04": "MTC04",
+  "MARSHMALLOW TOUCH CHEEK 05": "MTC05",
+  "HEART LACE POUCH": "LACE-HEARTPOUCH",
+  "HEROINE MOOD EYE PALETTE 01": "HMEY01-01",
+  "HEROINE MOOD EYE PALETTE 02": "HMEY02-02",
+  "HEROINE MOOD EYE PALETTE 03": "HMEY03-03",
+  "MELTING CREAM LIP BALM 01": "MCL-01",
+  "MELTING CREAM LIP BALM 02": "MCL-02",
+  "MELTING CREAM LIP BALM 03": "MCL-03",
+  "MELTING CREAM LIP BALM 04": "MCL-04",
+  "GLOSSY HONEY COUVERTURE LIP GLOSS 01": "GHC-LG-01",
+  "GLOSSY HONEY COUVERTURE LIP GLOSS 02": "GHC-LG-02",
+  "GLOSSY HONEY COUVERTURE LIP GLOSS 03": "GHC-LG-03",
+  "GLOSSY HONEY COUVERTURE LIP GLOSS 04": "GHC-LG-04",
+  "GLOSSY HONEY COUVERTURE LIP GLOSS 05": "GHC-LG-05",
+  "GLOSSY HONEY COUVERTURE LIP GLOSS 06": "GHC-LG-06",
+  "GLOSSY HONEY COUVERTURE LIP GLOSS 07": "GHC-LG-07",
+  "GLOSSY HONEY COUVERTURE LIP GLOSS 08": "GHC-LG-08",
+  "GLOSSY HONEY COUVERTURE LIP GLOSS 09": "GHC-LG-09",
+  "GLOSSY HONEY COUVERTURE LIP GLOSS 10": "GHC-LG-10",
+  "GLOSSY HONEY COUVERTURE LIP GLOSS 11": "GHC-LG-11",
+  "GLOSSY HONEY COUVERTURE LIP GLOSS 12": "GHC-LG-12",
+  "MUSE OF ECLAT EYESHADOW 01": "MOEE-01",
+  "MUSE OF ECLAT EYESHADOW 02": "MOEE-02",
+  "MUSE OF ECLAT EYESHADOW 03": "MOEE-03",
+  "MUSE OF ECLAT EYESHADOW 04": "MOEE-04",
+  "MUSE OF ECLAT EYESHADOW 05": "MOEE-05",
+  "MUSE OF ECLAT EYESHADOW 06": "MOEE-06",
+  "MUSE OF ECLAT EYESHADOW 07": "MOEE-07",
+  "MUSE OF ECLAT EYESHADOW 08": "MOEE-08",
+  "MUSE OF ECLAT EYESHADOW 09": "MOEE-09",
+  "MUSE OF ECLAT EYESHADOW 10": "MOEE-10",
+};
 
 // ============================================================
-// OAuth: Step 1 - Shopify認証ページへリダイレクト
+// CSV変換エンドポイント
 // ============================================================
-app.get('/auth', (req, res) => {
-  const shop = req.query.shop || shopDomain;
-  if (!shop) return res.send('shopパラメータが必要です');
-  const state = crypto.randomBytes(16).toString('hex');
-  const redirectUri = encodeURIComponent(`${HOST}/auth/callback`);
-  res.redirect(
-    `https://${shop}/admin/oauth/authorize?client_id=${CLIENT_ID}&scope=${SCOPES}&redirect_uri=${redirectUri}&state=${state}`
-  );
-});
-
-// ============================================================
-// OAuth: Step 2 - コールバック処理・アクセストークン取得
-// ============================================================
-app.get('/auth/callback', async (req, res) => {
-  const { code, shop, hmac } = req.query;
-
-  // HMAC検証
-  const params = Object.entries(req.query)
-    .filter(([k]) => k !== 'hmac' && k !== 'signature')
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}=${v}`)
-    .join('&');
-  const digest = crypto.createHmac('sha256', CLIENT_SECRET).update(params).digest('hex');
-  if (digest !== hmac) return res.status(400).send('認証エラー: HMAC verification failed');
-
-  const resp = await fetch(`https://${shop}/admin/oauth/access_token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, code }),
-  });
-  const data = await resp.json();
-  accessToken = data.access_token;
-  shopDomain = shop;
-
-  // 初回インストール時にトークンをコンソール表示（Renderの環境変数に設定するため）
-  console.log('\n========================================');
-  console.log('✅ アクセストークン取得成功!');
-  console.log(`SHOPIFY_ACCESS_TOKEN=${accessToken}`);
-  console.log(`SHOPIFY_SHOP=${shop}`);
-  console.log('上記をRenderの環境変数に設定してください');
-  console.log('========================================\n');
-
-  res.redirect('/');
-});
-
-// ============================================================
-// トップページ
-// ============================================================
-app.get('/', (req, res) => {
-  if (!accessToken) return res.redirect('/auth');
-  res.sendFile(__dirname + '/public/index.html');
-});
-
-// ============================================================
-// CSVエクスポート
-// ============================================================
-app.get('/export', async (req, res) => {
-  if (!accessToken) return res.redirect('/auth');
-
-  const { start, end } = req.query;
-  if (!start || !end) return res.status(400).send('start/endパラメータが必要です');
+app.post('/transform', upload.single('csv'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'CSVファイルが見つかりません' });
 
   try {
-    const orders = await fetchAllOrders(start, end);
-    const csv = generateCSV(orders);
-    const encoded = iconv.encode(csv, 'Shift_JIS');
+    // アップロードされたCSVをUTF-8またはShift-JISとしてデコード
+    let text;
+    try {
+      text = iconv.decode(req.file.buffer, 'UTF-8');
+    } catch {
+      text = iconv.decode(req.file.buffer, 'Shift_JIS');
+    }
+
+    const rows = parseCSV(text);
+    if (rows.length < 2) return res.status(400).json({ error: 'CSVデータが空です' });
+
+    const transformed = transformRows(rows);
+    const csvText = rowsToCSV(transformed);
+    const encoded = iconv.encode(csvText, 'Shift_JIS');
 
     res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="orders_${start}_${end}.csv"`
-    );
+    res.setHeader('Content-Disposition', 'attachment; filename="orders_converted.csv"');
     res.end(encoded);
   } catch (err) {
     console.error(err);
-    res.status(500).send('エクスポートに失敗しました: ' + err.message);
+    res.status(500).json({ error: '変換に失敗しました: ' + err.message });
   }
 });
 
 // ============================================================
-// 全注文取得（ページネーション対応）
+// バンドル商品SKU展開処理
 // ============================================================
-async function fetchAllOrders(start, end) {
-  const orders = [];
-  let url =
-    `https://${shopDomain}/admin/api/2024-01/orders.json` +
-    `?status=any` +
-    `&created_at_min=${start}T00:00:00+09:00` +
-    `&created_at_max=${end}T23:59:59+09:00` +
-    `&limit=250` +
-    `&fields=id,name,email,financial_status,fulfillment_status,created_at,processed_at,` +
-    `line_items,billing_address,shipping_address,note,subtotal_price,shipping_lines,` +
-    `total_tax,total_price,discount_codes,payment_gateway,cancelled_at,tags,` +
-    `note_attributes,customer,fulfillments,source_name,currency,` +
-    `total_shipping_price_set`;
+function transformRows(rows) {
+  const headers = rows[0];
+  const col = (name) => headers.indexOf(name);
 
-  while (url) {
-    const resp = await fetch(url, {
-      headers: { 'X-Shopify-Access-Token': accessToken },
-    });
-    if (!resp.ok) throw new Error(`Shopify API error: ${resp.status}`);
-    const data = await resp.json();
-    orders.push(...(data.orders || []));
+  const nameIdx        = col('Name');
+  const emailIdx       = col('Email');
+  const createdAtIdx   = col('Created at');
+  const itemNameIdx    = col('Lineitem name');
+  const itemSkuIdx     = col('Lineitem sku');
 
-    // ページネーション
-    const linkHeader = resp.headers.get('link');
-    const nextMatch = linkHeader && linkHeader.match(/<([^>]+)>;\s*rel="next"/);
-    url = nextMatch ? nextMatch[1] : null;
-  }
+  const lineitemCols = [
+    'Lineitem quantity', 'Lineitem price', 'Lineitem compare at price',
+    'Lineitem requires shipping', 'Lineitem taxable', 'Lineitem fulfillment status',
+    'Vendor', 'Lineitem discount',
+  ].map(n => ({ name: n, idx: col(n) })).filter(c => c.idx >= 0);
 
-  return orders;
-}
+  const result = [headers];
 
-// ============================================================
-// CSV生成（Shopify標準形式 + バンドルSKU展開）
-// ============================================================
-function generateCSV(orders) {
-  const headers = [
-    'Name', 'Email', 'Financial Status', 'Paid at', 'Fulfillment Status', 'Fulfilled at',
-    'Accepts Marketing', 'Currency', 'Subtotal', 'Shipping', 'Taxes', 'Total',
-    'Discount Code', 'Discount Amount', 'Shipping Method', 'Created at',
-    'Lineitem quantity', 'Lineitem name', 'Lineitem price', 'Lineitem compare at price',
-    'Lineitem sku', 'Lineitem requires shipping', 'Lineitem taxable', 'Lineitem fulfillment status',
-    'Billing Name', 'Billing Street', 'Billing Address1', 'Billing Address2', 'Billing Company',
-    'Billing City', 'Billing Zip', 'Billing Province', 'Billing Country', 'Billing Phone',
-    'Shipping Name', 'Shipping Street', 'Shipping Address1', 'Shipping Address2', 'Shipping Company',
-    'Shipping City', 'Shipping Zip', 'Shipping Province', 'Shipping Country', 'Shipping Phone',
-    'Notes', 'Note Attributes', 'Cancelled at', 'Payment Method', 'Payment Reference',
-    'Refunded Amount', 'Vendor', 'Outstanding Balance', 'Employee', 'Location', 'Device ID',
-    'Id', 'Tags', 'Risk Level', 'Source', 'Lineitem discount',
-  ];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const itemName = row[itemNameIdx] || '';
+    const itemSku  = row[itemSkuIdx]  || '';
 
-  const rows = [headers];
+    // バンドル商品の判定: SKU空 + "商品名 - 選択肢1 / 選択肢2" 形式
+    if (!itemSku && itemName.includes(' - ') && itemName.includes(' / ')) {
+      const dashIdx   = itemName.indexOf(' - ');
+      const optPart   = itemName.slice(dashIdx + 3);
+      const options   = optPart.split(' / ').map(o => o.trim());
+      const skuValues = options.map(o => SKU_MAP[o] || SKU_MAP[o.toUpperCase()] || null).filter(Boolean);
 
-  for (const order of orders) {
-    const lineItems = expandLineItems(order);
-
-    lineItems.forEach((item, index) => {
-      const isFirst = index === 0;
-      const row = [
-        // 注文レベルの情報（最初の行のみ）
-        isFirst ? (order.name || '') : '',
-        isFirst ? (order.email || '') : '',
-        isFirst ? (order.financial_status || '') : '',
-        isFirst ? formatDate(order.processed_at) : '',
-        isFirst ? (order.fulfillment_status || '') : '',
-        isFirst ? formatDate(order.fulfillments?.[0]?.updated_at) : '',
-        isFirst ? (order.customer?.accepts_marketing ? 'yes' : 'no') : '',
-        isFirst ? (order.currency || '') : '',
-        isFirst ? (order.subtotal_price || '') : '',
-        isFirst ? (order.total_shipping_price_set?.shop_money?.amount || '0') : '',
-        isFirst ? (order.total_tax || '') : '',
-        isFirst ? (order.total_price || '') : '',
-        isFirst ? (order.discount_codes?.[0]?.code || '') : '',
-        isFirst ? (order.discount_codes?.[0]?.amount || '0') : '',
-        isFirst ? (order.shipping_lines?.[0]?.title || '') : '',
-        isFirst ? formatDate(order.created_at) : '',
-        // ラインアイテムの情報
-        item.quantity,
-        item.name,
-        item.price,
-        item.compare_at_price || '',
-        item.sku || '',
-        item.requires_shipping ? 'true' : 'false',
-        item.taxable ? 'true' : 'false',
-        item.fulfillment_status || '',
-        // 請求先住所
-        isFirst ? (order.billing_address?.name || '') : '',
-        isFirst ? joinAddress(order.billing_address) : '',
-        isFirst ? (order.billing_address?.address1 || '') : '',
-        isFirst ? (order.billing_address?.address2 || '') : '',
-        isFirst ? (order.billing_address?.company || '') : '',
-        isFirst ? (order.billing_address?.city || '') : '',
-        isFirst ? (order.billing_address?.zip || '') : '',
-        isFirst ? (order.billing_address?.province_code || '') : '',
-        isFirst ? (order.billing_address?.country_code || '') : '',
-        isFirst ? (order.billing_address?.phone || '') : '',
-        // 配送先住所
-        isFirst ? (order.shipping_address?.name || '') : '',
-        isFirst ? joinAddress(order.shipping_address) : '',
-        isFirst ? (order.shipping_address?.address1 || '') : '',
-        isFirst ? (order.shipping_address?.address2 || '') : '',
-        isFirst ? (order.shipping_address?.company || '') : '',
-        isFirst ? (order.shipping_address?.city || '') : '',
-        isFirst ? (order.shipping_address?.zip || '') : '',
-        isFirst ? (order.shipping_address?.province_code || '') : '',
-        isFirst ? (order.shipping_address?.country_code || '') : '',
-        isFirst ? (order.shipping_address?.phone || '') : '',
-        // その他
-        isFirst ? (order.note || '') : '',
-        isFirst ? formatNoteAttributes(order.note_attributes) : '',
-        isFirst ? (order.cancelled_at ? formatDate(order.cancelled_at) : '') : '',
-        isFirst ? (order.payment_gateway || '') : '',
-        '', // Payment Reference
-        '0', // Refunded Amount
-        item.vendor || '',
-        '0', // Outstanding Balance
-        '', '', '', // Employee, Location, Device ID
-        isFirst ? String(order.id) : '',
-        isFirst ? (order.tags || '') : '',
-        '', // Risk Level
-        isFirst ? (order.source_name || 'web') : '',
-        '0', // Lineitem discount
-      ];
-      rows.push(row);
-    });
-  }
-
-  return rows.map(row => row.map(v => csvEscape(String(v ?? ''))).join(',')).join('\r\n');
-}
-
-// ============================================================
-// バンドル商品のSKU展開
-// ============================================================
-function expandLineItems(order) {
-  const result = [];
-  for (const item of order.line_items) {
-    // プロパティに「XXX SKU」が含まれる場合はバンドル商品として展開
-    const skuProps = (item.properties || []).filter(
-      p => p.name.endsWith(' SKU') && p.value
-    );
-
-    if (skuProps.length > 0) {
-      skuProps.forEach(prop => {
-        result.push({ ...item, sku: prop.value });
-      });
-    } else {
-      result.push(item);
+      if (skuValues.length > 0) {
+        skuValues.forEach((sku, idx) => {
+          if (idx === 0) {
+            // 最初の行: 元データをそのまま使いSKUだけ上書き
+            const newRow = [...row];
+            newRow[itemSkuIdx] = sku;
+            result.push(newRow);
+          } else {
+            // 追加行: 注文識別情報＋ラインアイテム情報のみ
+            const emptyRow = new Array(headers.length).fill('');
+            emptyRow[nameIdx]      = row[nameIdx];
+            emptyRow[emailIdx]     = row[emailIdx];
+            if (createdAtIdx >= 0) emptyRow[createdAtIdx] = row[createdAtIdx];
+            emptyRow[itemNameIdx]  = row[itemNameIdx];
+            emptyRow[itemSkuIdx]   = sku;
+            lineitemCols.forEach(c => { emptyRow[c.idx] = row[c.idx]; });
+            result.push(emptyRow);
+          }
+        });
+        continue;
+      }
     }
+
+    result.push(row);
   }
+
   return result;
 }
 
 // ============================================================
-// ユーティリティ
+// CSVパーサー（クォート・改行対応）
 // ============================================================
-function formatDate(dateStr) {
-  if (!dateStr) return '';
-  return dateStr;
-}
+function parseCSV(text) {
+  // BOM除去
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
 
-function joinAddress(addr) {
-  if (!addr) return '';
-  return [addr.address1, addr.address2].filter(Boolean).join(', ');
-}
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
 
-function formatNoteAttributes(attrs) {
-  if (!attrs || attrs.length === 0) return '""';
-  return attrs.map(a => `${a.name}: ${a.value}`).join(', ');
-}
+  for (let i = 0; i < text.length; i++) {
+    const ch   = text[i];
+    const next = text[i + 1];
 
-function csvEscape(value) {
-  if (value.includes(',') || value.includes('"') || value.includes('\n') || value.includes('\r')) {
-    return `"${value.replace(/"/g, '""')}"`;
+    if (inQuotes) {
+      if (ch === '"' && next === '"') { field += '"'; i++; }
+      else if (ch === '"') { inQuotes = false; }
+      else { field += ch; }
+    } else {
+      if      (ch === '"')                     { inQuotes = true; }
+      else if (ch === ',')                     { row.push(field); field = ''; }
+      else if (ch === '\r' && next === '\n')   { row.push(field); field = ''; rows.push(row); row = []; i++; }
+      else if (ch === '\n' || ch === '\r')     { row.push(field); field = ''; rows.push(row); row = []; }
+      else                                     { field += ch; }
+    }
   }
-  return value;
+
+  if (row.length > 0 || field) { row.push(field); rows.push(row); }
+
+  // 末尾の空行を除去
+  while (rows.length > 0 && rows[rows.length - 1].every(f => f === '')) rows.pop();
+
+  return rows;
+}
+
+// ============================================================
+// CSV生成
+// ============================================================
+function rowsToCSV(rows) {
+  return rows.map(row =>
+    row.map(v => {
+      const s = String(v ?? '');
+      return (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r'))
+        ? `"${s.replace(/"/g, '""')}"`
+        : s;
+    }).join(',')
+  ).join('\r\n');
 }
 
 // ============================================================
 // サーバー起動
 // ============================================================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`✅ サーバー起動: http://localhost:${PORT}`);
-});
+app.listen(PORT, () => console.log(`✅ サーバー起動: http://localhost:${PORT}`));
