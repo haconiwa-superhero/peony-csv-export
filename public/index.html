@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>注文CSV変換 | Peony</title>
+  <title>注文CSVエクスポート | Peony</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -20,35 +20,24 @@
       border-radius: 12px;
       padding: 40px;
       width: 100%;
-      max-width: 520px;
+      max-width: 480px;
       box-shadow: 0 2px 12px rgba(0,0,0,0.08);
     }
     .logo { font-size: 1.4rem; font-weight: 700; color: #1a1a1a; margin-bottom: 6px; }
-    .subtitle { font-size: 0.88rem; color: #6b7280; margin-bottom: 32px; line-height: 1.5; }
-
-    /* ドロップゾーン */
-    .dropzone {
-      border: 2px dashed #d1d5db;
-      border-radius: 10px;
-      padding: 36px 20px;
-      text-align: center;
-      cursor: pointer;
-      transition: border-color 0.2s, background 0.2s;
-      margin-bottom: 20px;
+    .subtitle { font-size: 0.88rem; color: #6b7280; margin-bottom: 32px; line-height: 1.6; }
+    .form-group { margin-bottom: 20px; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; color: #374151; margin-bottom: 6px; }
+    input[type="date"] {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      color: #1a1a1a;
+      outline: none;
+      transition: border-color 0.2s;
     }
-    .dropzone:hover, .dropzone.dragover {
-      border-color: #008060;
-      background: #f0fdf4;
-    }
-    .dropzone .icon { font-size: 2.4rem; margin-bottom: 10px; }
-    .dropzone .label { font-size: 0.95rem; color: #374151; font-weight: 500; }
-    .dropzone .sub { font-size: 0.8rem; color: #9ca3af; margin-top: 4px; }
-    .dropzone.has-file { border-color: #008060; background: #f0fdf4; }
-    .dropzone.has-file .label { color: #008060; }
-
-    input[type="file"] { display: none; }
-
-    /* ボタン */
+    input[type="date"]:focus { border-color: #008060; }
     .btn {
       width: 100%;
       padding: 13px;
@@ -59,126 +48,73 @@
       font-size: 1rem;
       font-weight: 600;
       cursor: pointer;
+      margin-top: 8px;
       transition: background 0.2s;
     }
     .btn:hover { background: #006e4f; }
     .btn:disabled { background: #9ca3af; cursor: not-allowed; }
-
-    /* ステータス */
-    .status {
-      margin-top: 16px;
-      padding: 12px;
-      border-radius: 8px;
-      font-size: 0.85rem;
-      display: none;
-    }
-    .status.loading { background: #eff6ff; color: #1d4ed8; display: block; }
-    .status.success { background: #f0fdf4; color: #166534; display: block; }
-    .status.error   { background: #fef2f2; color: #991b1b; display: block; }
-
-    /* 注意書き */
+    .loading { display: none; text-align: center; margin-top: 12px; color: #6b7280; font-size: 0.88rem; }
     .note {
       margin-top: 20px;
-      font-size: 0.8rem;
-      color: #9ca3af;
+      padding: 12px;
+      background: #f0fdf4;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      color: #166534;
       line-height: 1.7;
     }
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="logo">Peony 注文CSV変換</div>
-    <div class="subtitle">
-      ShopifyからエクスポートしたCSVをアップロードすると、<br>
-      バンドル商品のSKUを展開した倉庫向けCSVをダウンロードできます。
+    <div class="logo">Peony 注文CSVエクスポート</div>
+    <div class="subtitle">期間を指定するだけで倉庫向けCSVをダウンロードできます</div>
+
+    <div class="form-group">
+      <label>開始日</label>
+      <input type="date" id="start">
+    </div>
+    <div class="form-group">
+      <label>終了日</label>
+      <input type="date" id="end">
     </div>
 
-    <div class="dropzone" id="dropzone" onclick="document.getElementById('fileInput').click()">
-      <div class="icon">📂</div>
-      <div class="label" id="dropLabel">CSVファイルを選択またはドラッグ＆ドロップ</div>
-      <div class="sub">orders_export.csv</div>
-    </div>
-    <input type="file" id="fileInput" accept=".csv">
-
-    <button class="btn" id="convertBtn" onclick="convert()" disabled>変換してダウンロード</button>
-
-    <div class="status" id="status"></div>
+    <button class="btn" id="exportBtn" onclick="exportCSV()">CSVをダウンロード</button>
+    <div class="loading" id="loading">取得中です。しばらくお待ちください...</div>
 
     <div class="note">
-      ✅ バンドル商品は自動的に個別SKUに展開されます<br>
-      ✅ 出力ファイルはShift-JIS（ANSI）形式です<br>
-      ✅ アップロードしたデータはサーバーに保存されません
+      ✅ セット商品はSKUごとに自動で複数行に展開されます<br>
+      ✅ 文字コードはShift-JIS（ANSI）で出力されます<br>
+      ✅ Shopifyからの手動エクスポート不要
     </div>
   </div>
 
   <script>
-    let selectedFile = null;
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('start').value = today;
+    document.getElementById('end').value   = today;
 
-    const dropzone  = document.getElementById('dropzone');
-    const fileInput = document.getElementById('fileInput');
-    const dropLabel = document.getElementById('dropLabel');
-    const convertBtn = document.getElementById('convertBtn');
-    const status    = document.getElementById('status');
+    function exportCSV() {
+      const start = document.getElementById('start').value;
+      const end   = document.getElementById('end').value;
+      if (!start || !end)  { alert('期間を入力してください'); return; }
+      if (start > end)     { alert('開始日は終了日より前にしてください'); return; }
 
-    // ファイル選択
-    fileInput.addEventListener('change', () => {
-      if (fileInput.files[0]) setFile(fileInput.files[0]);
-    });
+      const btn     = document.getElementById('exportBtn');
+      const loading = document.getElementById('loading');
+      btn.disabled          = true;
+      loading.style.display = 'block';
 
-    // ドラッグ＆ドロップ
-    dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
-    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-    dropzone.addEventListener('drop', e => {
-      e.preventDefault();
-      dropzone.classList.remove('dragover');
-      const f = e.dataTransfer.files[0];
-      if (f && f.name.endsWith('.csv')) setFile(f);
-      else showStatus('error', 'CSVファイルを選択してください');
-    });
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.src = `/export?start=${start}&end=${end}`;
+      document.body.appendChild(iframe);
 
-    function setFile(file) {
-      selectedFile = file;
-      dropzone.classList.add('has-file');
-      dropLabel.textContent = `✓ ${file.name}`;
-      convertBtn.disabled = false;
-      status.className = 'status';
-    }
-
-    async function convert() {
-      if (!selectedFile) return;
-
-      convertBtn.disabled = true;
-      showStatus('loading', '変換中です...');
-
-      const formData = new FormData();
-      formData.append('csv', selectedFile);
-
-      try {
-        const resp = await fetch('/transform', { method: 'POST', body: formData });
-        if (!resp.ok) {
-          const err = await resp.json().catch(() => ({ error: '変換に失敗しました' }));
-          throw new Error(err.error);
-        }
-
-        const blob = await resp.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'orders_converted.csv';
-        a.click();
-        URL.revokeObjectURL(url);
-
-        showStatus('success', '✅ 変換完了！CSVをダウンロードしました。');
-      } catch (err) {
-        showStatus('error', '❌ エラー: ' + err.message);
-      } finally {
-        convertBtn.disabled = false;
-      }
-    }
-
-    function showStatus(type, msg) {
-      status.className = 'status ' + type;
-      status.textContent = msg;
+      setTimeout(() => {
+        btn.disabled          = false;
+        loading.style.display = 'none';
+        document.body.removeChild(iframe);
+      }, 8000);
     }
   </script>
 </body>
