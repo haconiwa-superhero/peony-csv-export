@@ -73,14 +73,8 @@ app.get('/preview', async (req, res) => {
   const { start, end, fulfillment = 'any' } = req.query;
   if (!start || !end) return res.status(400).json({ error: 'パラメータ不足' });
   try {
-    const url =
-      `https://${shopDomain}/admin/api/2024-01/orders/count.json` +
-      `?status=any&fulfillment_status=${fulfillment}` +
-      `&created_at_min=${start}T00:00:00+09:00` +
-      `&created_at_max=${end}T23:59:59+09:00`;
-    const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': accessToken } });
-    const data = await resp.json();
-    res.json({ count: data.count ?? 0 });
+    const orders = await fetchAllOrders(start, end, fulfillment);
+    res.json({ count: orders.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
