@@ -225,7 +225,7 @@ function generateCSV(orders) {
     lineItems.forEach((item, index) => {
       const isFirst = index === 0;
       rows.push([
-        isFirst ? (order.name || '')                                        : '',
+        order.name || '',
         isFirst ? (order.email || '')                                       : '',
         isFirst ? (order.financial_status || '')                            : '',
         isFirst ? (order.processed_at || '')                                : '',
