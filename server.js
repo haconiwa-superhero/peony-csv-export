@@ -180,7 +180,7 @@ async function fetchAllOrders(start, end, fulfillment = 'any') {
     `line_items,billing_address,shipping_address,note,subtotal_price,shipping_lines,` +
     `total_tax,total_price,discount_codes,payment_gateway,cancelled_at,tags,` +
     `note_attributes,customer,fulfillments,source_name,currency,total_shipping_price_set,` +
-    `tax_lines,phone,payment_details`;
+    `tax_lines,phone,payment_details,transactions`;
 
   while (url) {
     const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': accessToken } });
@@ -293,27 +293,27 @@ function generateCSV(orders) {
         isFirst ? fmtNoteAttrs(order.note_attributes)                      : '',
         isFirst ? (order.cancelled_at || '')                                : '',
         isFirst ? (order.payment_gateway || '')                             : '',
-        isFirst ? (order.payment_details?.credit_card_number || '')        : '',
+        isFirst ? (order.transactions?.[0]?.authorization || '')           : '',
         '0',
         item.vendor || '',
         '0', '', '', '',
         isFirst ? String(order.id) : '',
         isFirst ? (order.tags || '')  : '',
-        '',
+        isFirst ? 'Low' : '',
         isFirst ? (order.source_name || 'web') : '',
         '0',
         // Tax columns（最大5件）
         ...getTaxColumns(isFirst ? order.tax_lines : []),
         // 追加列
-        order.phone || order.billing_address?.phone || '',
+        isFirst ? (order.phone || '') : '',
         '',
         '',
         isFirst ? (JP_PROVINCE_NAMES[order.billing_address?.province_code] || order.billing_address?.province || '')  : '',
         isFirst ? (JP_PROVINCE_NAMES[order.shipping_address?.province_code] || order.shipping_address?.province || '') : '',
-        isFirst ? (order.payment_details?.credit_card_number || '') : '',
+        isFirst ? (order.transactions?.[0]?.authorization || '') : '',
         '',
         '',
-        isFirst ? (order.payment_details?.credit_card_number || '') : '',
+        isFirst ? (order.transactions?.[0]?.authorization || '') : '',
       ]);
     });
   }
