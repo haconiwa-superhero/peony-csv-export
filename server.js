@@ -23,7 +23,7 @@ const exportHistory = [];
 // ============================================================
 const SKU_MAP = {
   'GLOW OF LOVE HIGHLIGHTER 01': 'GOH01 card sets',
-  'GLOW OF LOVE HIGHLIGHTER 02': 'GOH02-02',
+  'GLOW OF LOVE HIGHLIGHTER 02': 'GOH02 card sets',
   'GLOW OF LOVE HIGHLIGHTER 03': 'GOH03',
   'GLOW OF LOVE HIGHLIGHTER 04': 'GOH04',
   'MARSHMALLOW TOUCH CHEEK 01': 'MTC01',
