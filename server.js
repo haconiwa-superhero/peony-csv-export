@@ -194,6 +194,26 @@ async function fetchAllOrders(start, end, fulfillment = 'any') {
   return orders;
 }
 
+// 日付形式変換: ISO 8601 → Shopify標準形式
+function fmtDate(d) {
+  if (!d) return '';
+  return d.replace('T', ' ').replace(/([+-]\d{2}):(\d{2})$/, ' $1$2');
+}
+
+// JP都道府県コード → 日本語名
+const JP_PROVINCE_NAMES = {
+  'JP-01':'北海道','JP-02':'青森県','JP-03':'岩手県','JP-04':'宮城県','JP-05':'秋田県',
+  'JP-06':'山形県','JP-07':'福島県','JP-08':'茨城県','JP-09':'栃木県','JP-10':'群馬県',
+  'JP-11':'埼玉県','JP-12':'千葉県','JP-13':'東京都','JP-14':'神奈川県','JP-15':'新潟県',
+  'JP-16':'富山県','JP-17':'石川県','JP-18':'福井県','JP-19':'山梨県','JP-20':'長野県',
+  'JP-21':'岐阜県','JP-22':'静岡県','JP-23':'愛知県','JP-24':'三重県','JP-25':'滋賀県',
+  'JP-26':'京都府','JP-27':'大阪府','JP-28':'兵庫県','JP-29':'奈良県','JP-30':'和歌山県',
+  'JP-31':'鳥取県','JP-32':'島根県','JP-33':'岡山県','JP-34':'広島県','JP-35':'山口県',
+  'JP-36':'徳島県','JP-37':'香川県','JP-38':'愛媛県','JP-39':'高知県','JP-40':'福岡県',
+  'JP-41':'佐賀県','JP-42':'長崎県','JP-43':'熊本県','JP-44':'大分県','JP-45':'宮崎県',
+  'JP-46':'鹿児島県','JP-47':'沖縄県',
+};
+
 // ============================================================
 // CSV生成（Shopify標準形式 + バンドルSKU展開）
 // ============================================================
@@ -226,11 +246,11 @@ function generateCSV(orders) {
       const isFirst = index === 0;
       rows.push([
         order.name || '',
-        isFirst ? (order.email || '')                                       : '',
+        order.email || '',
         isFirst ? (order.financial_status || '')                            : '',
-        isFirst ? (order.processed_at || '')                                : '',
+        isFirst ? fmtDate(order.processed_at)                              : '',
         isFirst ? (order.fulfillment_status || '')                          : '',
-        isFirst ? (order.fulfillments?.[0]?.updated_at || '')              : '',
+        isFirst ? fmtDate(order.fulfillments?.[0]?.updated_at)             : '',
         isFirst ? (order.customer?.accepts_marketing ? 'yes' : 'no')       : '',
         isFirst ? (order.currency || '')                                    : '',
         isFirst ? (order.subtotal_price || '')                              : '',
@@ -240,7 +260,7 @@ function generateCSV(orders) {
         isFirst ? (order.discount_codes?.[0]?.code || '')                  : '',
         isFirst ? (order.discount_codes?.[0]?.amount || '0')               : '',
         isFirst ? (order.shipping_lines?.[0]?.title || '')                 : '',
-        isFirst ? (order.created_at || '')                                  : '',
+        fmtDate(order.created_at),
         item.quantity,
         item.name,
         item.price,
@@ -288,8 +308,8 @@ function generateCSV(orders) {
         order.phone || order.billing_address?.phone || '',
         '',
         '',
-        isFirst ? (order.billing_address?.province || '')  : '',
-        isFirst ? (order.shipping_address?.province || '') : '',
+        isFirst ? (JP_PROVINCE_NAMES[order.billing_address?.province_code] || order.billing_address?.province || '')  : '',
+        isFirst ? (JP_PROVINCE_NAMES[order.shipping_address?.province_code] || order.shipping_address?.province || '') : '',
         isFirst ? (order.payment_details?.credit_card_number || '') : '',
         '',
         '',
@@ -339,8 +359,9 @@ function expandLineItems(order) {
 function getTaxColumns(taxLines) {
   const result = [];
   for (let i = 0; i < 5; i++) {
-    result.push(taxLines?.[i]?.title || '');
-    result.push(taxLines?.[i]?.price || '');
+    const t = taxLines?.[i];
+    result.push(t ? `${t.title} ${Math.round((t.rate || 0) * 100)}%` : '');
+    result.push(t?.price || '');
   }
   return result;
 }
