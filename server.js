@@ -148,7 +148,8 @@ async function fetchAllOrders(start, end) {
     `&fields=id,name,email,financial_status,fulfillment_status,created_at,processed_at,` +
     `line_items,billing_address,shipping_address,note,subtotal_price,shipping_lines,` +
     `total_tax,total_price,discount_codes,payment_gateway,cancelled_at,tags,` +
-    `note_attributes,customer,fulfillments,source_name,currency,total_shipping_price_set`;
+    `note_attributes,customer,fulfillments,source_name,currency,total_shipping_price_set,` +
+    `tax_lines,phone,payment_details`;
 
   while (url) {
     const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': accessToken } });
@@ -179,6 +180,11 @@ function generateCSV(orders) {
     'Notes', 'Note Attributes', 'Cancelled at', 'Payment Method', 'Payment Reference',
     'Refunded Amount', 'Vendor', 'Outstanding Balance', 'Employee', 'Location', 'Device ID',
     'Id', 'Tags', 'Risk Level', 'Source', 'Lineitem discount',
+    'Tax 1 Name', 'Tax 1 Value', 'Tax 2 Name', 'Tax 2 Value', 'Tax 3 Name', 'Tax 3 Value',
+    'Tax 4 Name', 'Tax 4 Value', 'Tax 5 Name', 'Tax 5 Value',
+    'Phone', 'Receipt Number', 'Duties',
+    'Billing Province Name', 'Shipping Province Name',
+    'Payment ID', 'Payment Terms Name', 'Next Payment Due At', 'Payment References',
   ];
 
   const rows = [headers];
@@ -236,7 +242,8 @@ function generateCSV(orders) {
         isFirst ? fmtNoteAttrs(order.note_attributes)                      : '',
         isFirst ? (order.cancelled_at || '')                                : '',
         isFirst ? (order.payment_gateway || '')                             : '',
-        '', '0',
+        isFirst ? (order.payment_details?.credit_card_number || '')        : '',
+        '0',
         item.vendor || '',
         '0', '', '', '',
         isFirst ? String(order.id) : '',
@@ -244,6 +251,18 @@ function generateCSV(orders) {
         '',
         isFirst ? (order.source_name || 'web') : '',
         '0',
+        // Tax columns（最大5件）
+        ...getTaxColumns(isFirst ? order.tax_lines : []),
+        // 追加列
+        order.phone || order.billing_address?.phone || '',
+        '',
+        '',
+        isFirst ? (order.billing_address?.province || '')  : '',
+        isFirst ? (order.shipping_address?.province || '') : '',
+        isFirst ? (order.payment_details?.credit_card_number || '') : '',
+        '',
+        '',
+        isFirst ? (order.payment_details?.credit_card_number || '') : '',
       ]);
     });
   }
@@ -286,6 +305,15 @@ function expandLineItems(order) {
 // ============================================================
 // ユーティリティ
 // ============================================================
+function getTaxColumns(taxLines) {
+  const result = [];
+  for (let i = 0; i < 5; i++) {
+    result.push(taxLines?.[i]?.title || '');
+    result.push(taxLines?.[i]?.price || '');
+  }
+  return result;
+}
+
 function joinAddr(addr) {
   if (!addr) return '';
   return [addr.address1, addr.address2].filter(Boolean).join(', ');
