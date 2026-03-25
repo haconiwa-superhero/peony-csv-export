@@ -118,11 +118,11 @@ app.get('/', (_req, res) => {
 // ============================================================
 app.get('/export', async (req, res) => {
   if (!accessToken) return res.redirect(`/auth?shop=${shopDomain}`);
-  const { start, end } = req.query;
+  const { start, end, fulfillment = 'any' } = req.query;
   if (!start || !end) return res.status(400).send('start/endパラメータが必要です');
 
   try {
-    const orders = await fetchAllOrders(start, end);
+    const orders = await fetchAllOrders(start, end, fulfillment);
     const csv    = generateCSV(orders);
     const encoded = iconv.encode(csv, 'Shift_JIS');
     res.setHeader('Content-Type', 'application/octet-stream');
@@ -137,11 +137,12 @@ app.get('/export', async (req, res) => {
 // ============================================================
 // 全注文取得（ページネーション対応）
 // ============================================================
-async function fetchAllOrders(start, end) {
+async function fetchAllOrders(start, end, fulfillment = 'any') {
   const orders = [];
   let url =
     `https://${shopDomain}/admin/api/2024-01/orders.json` +
     `?status=any` +
+    `&fulfillment_status=${fulfillment}` +
     `&created_at_min=${start}T00:00:00+09:00` +
     `&created_at_max=${end}T23:59:59+09:00` +
     `&limit=250` +

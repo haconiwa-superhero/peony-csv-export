@@ -38,6 +38,18 @@
       transition: border-color 0.2s;
     }
     input[type="date"]:focus { border-color: #008060; }
+    select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      color: #1a1a1a;
+      outline: none;
+      background: white;
+      transition: border-color 0.2s;
+    }
+    select:focus { border-color: #008060; }
     .btn {
       width: 100%;
       padding: 13px;
@@ -78,6 +90,15 @@
       <label>終了日</label>
       <input type="date" id="end">
     </div>
+    <div class="form-group">
+      <label>発送ステータス</label>
+      <select id="fulfillment">
+        <option value="any">すべて</option>
+        <option value="unfulfilled" selected>未発送のみ</option>
+        <option value="fulfilled">発送済みのみ</option>
+        <option value="partial">一部発送済み</option>
+      </select>
+    </div>
 
     <button class="btn" id="exportBtn" onclick="exportCSV()">CSVをダウンロード</button>
     <div class="loading" id="loading">取得中です。しばらくお待ちください...</div>
@@ -95,8 +116,9 @@
     document.getElementById('end').value   = today;
 
     function exportCSV() {
-      const start = document.getElementById('start').value;
-      const end   = document.getElementById('end').value;
+      const start       = document.getElementById('start').value;
+      const end         = document.getElementById('end').value;
+      const fulfillment = document.getElementById('fulfillment').value;
       if (!start || !end)  { alert('期間を入力してください'); return; }
       if (start > end)     { alert('開始日は終了日より前にしてください'); return; }
 
@@ -107,7 +129,7 @@
 
       const iframe = document.createElement('iframe');
       iframe.style.display = 'none';
-      iframe.src = `/export?start=${start}&end=${end}`;
+      iframe.src = `/export?start=${start}&end=${end}&fulfillment=${fulfillment}`;
       document.body.appendChild(iframe);
 
       setTimeout(() => {
