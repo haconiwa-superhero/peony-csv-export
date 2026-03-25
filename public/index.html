@@ -11,34 +11,24 @@
       background: #f6f6f7;
       min-height: 100vh;
       display: flex;
+      flex-direction: column;
       align-items: center;
-      justify-content: center;
-      padding: 20px;
+      padding: 40px 20px;
     }
     .card {
       background: white;
       border-radius: 12px;
       padding: 40px;
       width: 100%;
-      max-width: 480px;
+      max-width: 520px;
       box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      margin-bottom: 20px;
     }
     .logo { font-size: 1.4rem; font-weight: 700; color: #1a1a1a; margin-bottom: 6px; }
     .subtitle { font-size: 0.88rem; color: #6b7280; margin-bottom: 32px; line-height: 1.6; }
     .form-group { margin-bottom: 20px; }
     label { display: block; font-size: 0.85rem; font-weight: 600; color: #374151; margin-bottom: 6px; }
-    input[type="date"] {
-      width: 100%;
-      padding: 10px 12px;
-      border: 1px solid #d1d5db;
-      border-radius: 8px;
-      font-size: 0.95rem;
-      color: #1a1a1a;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-    input[type="date"]:focus { border-color: #008060; }
-    select {
+    input[type="date"], select {
       width: 100%;
       padding: 10px 12px;
       border: 1px solid #d1d5db;
@@ -49,22 +39,34 @@
       background: white;
       transition: border-color 0.2s;
     }
-    select:focus { border-color: #008060; }
+    input[type="date"]:focus, select:focus { border-color: #008060; }
+    .btn-row { display: flex; gap: 10px; margin-top: 8px; }
     .btn {
-      width: 100%;
+      flex: 1;
       padding: 13px;
-      background: #008060;
-      color: white;
       border: none;
       border-radius: 8px;
-      font-size: 1rem;
+      font-size: 0.95rem;
       font-weight: 600;
       cursor: pointer;
-      margin-top: 8px;
       transition: background 0.2s;
     }
-    .btn:hover { background: #006e4f; }
-    .btn:disabled { background: #9ca3af; cursor: not-allowed; }
+    .btn-primary { background: #008060; color: white; }
+    .btn-primary:hover { background: #006e4f; }
+    .btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
+    .btn-secondary { background: #f3f4f6; color: #374151; }
+    .btn-secondary:hover { background: #e5e7eb; }
+    .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .preview-box {
+      display: none;
+      margin-top: 14px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      background: #eff6ff;
+      color: #1e40af;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
     .loading { display: none; text-align: center; margin-top: 12px; color: #6b7280; font-size: 0.88rem; }
     .note {
       margin-top: 20px;
@@ -75,12 +77,42 @@
       color: #166534;
       line-height: 1.7;
     }
+    .admin-link {
+      text-align: right;
+      margin-top: 12px;
+      font-size: 0.8rem;
+    }
+    .admin-link a { color: #9ca3af; text-decoration: none; }
+    .admin-link a:hover { color: #6b7280; }
+    /* 履歴 */
+    .history-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #374151;
+      margin-bottom: 14px;
+    }
+    .history-empty { font-size: 0.85rem; color: #9ca3af; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+    th { text-align: left; padding: 8px 10px; background: #f9fafb; color: #6b7280; font-weight: 600; border-bottom: 1px solid #e5e7eb; }
+    td { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; color: #374151; }
+    tr:last-child td { border-bottom: none; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-unfulfilled { background: #fef3c7; color: #92400e; }
+    .badge-fulfilled   { background: #d1fae5; color: #065f46; }
+    .badge-any         { background: #e5e7eb; color: #374151; }
+    .badge-partial     { background: #dbeafe; color: #1e40af; }
   </style>
 </head>
 <body>
   <div class="card">
     <div class="logo">Peony 注文CSVエクスポート</div>
-    <div class="subtitle">期間を指定するだけで倉庫向けCSVをダウンロードできます</div>
+    <div class="subtitle">条件を指定して倉庫向けCSVをダウンロードできます</div>
 
     <div class="form-group">
       <label>開始日</label>
@@ -100,14 +132,32 @@
       </select>
     </div>
 
-    <button class="btn" id="exportBtn" onclick="exportCSV()">CSVをダウンロード</button>
-    <div class="loading" id="loading">取得中です。しばらくお待ちください...</div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="previewBtn" onclick="previewCount()">件数を確認</button>
+      <button class="btn btn-primary"   id="exportBtn"  onclick="exportCSV()">CSVをダウンロード</button>
+    </div>
+
+    <div class="preview-box" id="previewBox"></div>
+    <div class="loading"     id="loading">取得中です。しばらくお待ちください...</div>
 
     <div class="note">
       ✅ セット商品はSKUごとに自動で複数行に展開されます<br>
       ✅ 文字コードはShift-JIS（ANSI）で出力されます<br>
       ✅ Shopifyからの手動エクスポート不要
     </div>
+
+    <div class="admin-link"><a href="/admin">管理設定</a></div>
+  </div>
+
+  <div class="card" id="historyCard">
+    <div class="history-title">エクスポート履歴</div>
+    <div class="history-empty" id="historyEmpty">まだエクスポートがありません</div>
+    <table id="historyTable" style="display:none">
+      <thead>
+        <tr><th>日時</th><th>期間</th><th>ステータス</th><th>件数</th></tr>
+      </thead>
+      <tbody id="historyBody"></tbody>
+    </table>
   </div>
 
   <script>
@@ -115,12 +165,40 @@
     document.getElementById('start').value = today;
     document.getElementById('end').value   = today;
 
+    function getParams() {
+      return {
+        start:       document.getElementById('start').value,
+        end:         document.getElementById('end').value,
+        fulfillment: document.getElementById('fulfillment').value,
+      };
+    }
+
+    async function previewCount() {
+      const { start, end, fulfillment } = getParams();
+      if (!start || !end) { alert('期間を入力してください'); return; }
+      if (start > end)    { alert('開始日は終了日より前にしてください'); return; }
+
+      const btn = document.getElementById('previewBtn');
+      const box = document.getElementById('previewBox');
+      btn.disabled = true;
+      box.style.display = 'none';
+
+      try {
+        const resp = await fetch(`/preview?start=${start}&end=${end}&fulfillment=${fulfillment}`);
+        const data = await resp.json();
+        box.textContent   = `対象注文数：${data.count} 件`;
+        box.style.display = 'block';
+      } catch {
+        alert('件数の取得に失敗しました');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     function exportCSV() {
-      const start       = document.getElementById('start').value;
-      const end         = document.getElementById('end').value;
-      const fulfillment = document.getElementById('fulfillment').value;
-      if (!start || !end)  { alert('期間を入力してください'); return; }
-      if (start > end)     { alert('開始日は終了日より前にしてください'); return; }
+      const { start, end, fulfillment } = getParams();
+      if (!start || !end) { alert('期間を入力してください'); return; }
+      if (start > end)    { alert('開始日は終了日より前にしてください'); return; }
 
       const btn     = document.getElementById('exportBtn');
       const loading = document.getElementById('loading');
@@ -136,8 +214,41 @@
         btn.disabled          = false;
         loading.style.display = 'none';
         document.body.removeChild(iframe);
+        loadHistory();
       }, 8000);
     }
+
+    const STATUS_LABELS = {
+      any:         ['すべて',     'badge-any'],
+      unfulfilled: ['未発送',     'badge-unfulfilled'],
+      fulfilled:   ['発送済み',   'badge-fulfilled'],
+      partial:     ['一部発送済み','badge-partial'],
+    };
+
+    async function loadHistory() {
+      const resp = await fetch('/api/history');
+      const list = await resp.json();
+      const empty = document.getElementById('historyEmpty');
+      const table = document.getElementById('historyTable');
+      const tbody = document.getElementById('historyBody');
+
+      if (list.length === 0) { empty.style.display = 'block'; table.style.display = 'none'; return; }
+
+      empty.style.display = 'none';
+      table.style.display = 'table';
+      tbody.innerHTML = list.map(h => {
+        const [label, cls] = STATUS_LABELS[h.fulfillment] || ['不明', 'badge-any'];
+        const dt = new Date(h.timestamp).toLocaleString('ja-JP', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+        return `<tr>
+          <td>${dt}</td>
+          <td>${h.start} 〜 ${h.end}</td>
+          <td><span class="badge ${cls}">${label}</span></td>
+          <td>${h.count} 件</td>
+        </tr>`;
+      }).join('');
+    }
+
+    loadHistory();
   </script>
 </body>
 </html>

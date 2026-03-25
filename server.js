@@ -15,10 +15,16 @@ const SCOPES        = 'read_orders';
 let shopDomain  = process.env.SHOPIFY_SHOP || '';
 let accessToken = process.env.SHOPIFY_ACCESS_TOKEN || '';
 
+// 管理者パスワード（Renderの環境変数 ADMIN_PASSWORD で設定）
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'peony-admin';
+
+// エクスポート履歴（最大100件、サーバー再起動でリセット）
+const exportHistory = [];
+
 // ============================================================
-// SKUマップ（プロパティにSKUがない場合のフォールバック用）
+// SKUマップ（管理画面から編集可能・サーバー再起動でリセット）
 // ============================================================
-const SKU_MAP = {
+let SKU_MAP = {
   'GLOW OF LOVE HIGHLIGHTER 01': 'GOH01 card sets',
   'GLOW OF LOVE HIGHLIGHTER 02': 'GOH02-02',
   'GLOW OF LOVE HIGHLIGHTER 03': 'GOH03',
@@ -59,6 +65,49 @@ const SKU_MAP = {
   'MUSE OF ECLAT EYESHADOW 09': 'MOEE-09',
   'MUSE OF ECLAT EYESHADOW 10': 'MOEE-10',
 };
+
+app.use(express.json());
+
+// ============================================================
+// ① 件数プレビュー
+// ============================================================
+app.get('/preview', async (req, res) => {
+  if (!accessToken) return res.status(401).json({ error: '未認証' });
+  const { start, end, fulfillment = 'any' } = req.query;
+  if (!start || !end) return res.status(400).json({ error: 'パラメータ不足' });
+  try {
+    const url =
+      `https://${shopDomain}/admin/api/2024-01/orders/count.json` +
+      `?status=any&fulfillment_status=${fulfillment}` +
+      `&created_at_min=${start}T00:00:00+09:00` +
+      `&created_at_max=${end}T23:59:59+09:00`;
+    const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': accessToken } });
+    const data = await resp.json();
+    res.json({ count: data.count ?? 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// ② SKUマップ管理
+// ============================================================
+app.get('/api/sku-map', (_req, res) => res.json(SKU_MAP));
+
+app.post('/api/sku-map', (req, res) => {
+  const { password, map } = req.body;
+  if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'パスワードが違います' });
+  if (!map || typeof map !== 'object') return res.status(400).json({ error: '不正なデータ' });
+  SKU_MAP = map;
+  res.json({ ok: true });
+});
+
+app.get('/admin', (_req, res) => res.sendFile(__dirname + '/public/admin.html'));
+
+// ============================================================
+// ⑤ エクスポート履歴
+// ============================================================
+app.get('/api/history', (_req, res) => res.json(exportHistory));
 
 // ============================================================
 // OAuth: Step1 - Shopify認証ページへリダイレクト
@@ -125,6 +174,11 @@ app.get('/export', async (req, res) => {
     const orders = await fetchAllOrders(start, end, fulfillment);
     const csv    = generateCSV(orders);
     const encoded = iconv.encode(csv, 'Shift_JIS');
+
+    // 履歴を記録
+    exportHistory.unshift({ timestamp: new Date().toISOString(), start, end, fulfillment, count: orders.length });
+    if (exportHistory.length > 100) exportHistory.pop();
+
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="orders_${start}_${end}.csv"`);
     res.end(encoded);
