@@ -15,16 +15,13 @@ const SCOPES        = 'read_orders';
 let shopDomain  = process.env.SHOPIFY_SHOP || '';
 let accessToken = process.env.SHOPIFY_ACCESS_TOKEN || '';
 
-// 管理者パスワード（Renderの環境変数 ADMIN_PASSWORD で設定）
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'peony-admin';
-
 // エクスポート履歴（最大100件、サーバー再起動でリセット）
 const exportHistory = [];
 
 // ============================================================
 // SKUマップ（管理画面から編集可能・サーバー再起動でリセット）
 // ============================================================
-let SKU_MAP = {
+const SKU_MAP = {
   'GLOW OF LOVE HIGHLIGHTER 01': 'GOH01 card sets',
   'GLOW OF LOVE HIGHLIGHTER 02': 'GOH02-02',
   'GLOW OF LOVE HIGHLIGHTER 03': 'GOH03',
@@ -88,21 +85,6 @@ app.get('/preview', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-// ============================================================
-// ② SKUマップ管理
-// ============================================================
-app.get('/api/sku-map', (_req, res) => res.json(SKU_MAP));
-
-app.post('/api/sku-map', (req, res) => {
-  const { password, map } = req.body;
-  if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'パスワードが違います' });
-  if (!map || typeof map !== 'object') return res.status(400).json({ error: '不正なデータ' });
-  SKU_MAP = map;
-  res.json({ ok: true });
-});
-
-app.get('/admin', (_req, res) => res.sendFile(__dirname + '/public/admin.html'));
 
 // ============================================================
 // ⑤ エクスポート履歴
