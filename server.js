@@ -191,7 +191,8 @@ async function fetchAllOrders(start, end, fulfillment = 'any') {
     const next = link && link.match(/<([^>]+)>;\s*rel="next"/);
     url = next ? next[1] : null;
   }
-  return orders;
+  // 返金済み・一部返金済みを除外
+  return orders.filter(o => o.financial_status !== 'refunded' && o.financial_status !== 'partially_refunded');
 }
 
 // 日付形式変換: ISO 8601 → Shopify標準形式
