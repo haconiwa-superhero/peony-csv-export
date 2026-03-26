@@ -149,7 +149,7 @@ app.get('/export', async (req, res) => {
   try {
     const orders = await fetchAllOrders(start, end, fulfillment);
     const csv    = generateCSV(orders);
-    const encoded = iconv.encode(csv, 'Shift_JIS');
+    const encoded = iconv.encode(csv, 'CP932');
 
     // 履歴を記録
     exportHistory.unshift({ timestamp: new Date().toISOString(), start, end, fulfillment, count: orders.length });
