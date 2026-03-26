@@ -180,7 +180,7 @@ async function fetchAllOrders(start, end, fulfillment = 'any') {
     `line_items,billing_address,shipping_address,note,subtotal_price,shipping_lines,` +
     `total_tax,total_price,discount_codes,payment_gateway,cancelled_at,tags,` +
     `note_attributes,customer,fulfillments,source_name,currency,total_shipping_price_set,` +
-    `tax_lines,phone,payment_details,transactions`;
+    `tax_lines,phone,payment_details,transactions,refunds`;
 
   while (url) {
     const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': accessToken } });
@@ -191,8 +191,12 @@ async function fetchAllOrders(start, end, fulfillment = 'any') {
     const next = link && link.match(/<([^>]+)>;\s*rel="next"/);
     url = next ? next[1] : null;
   }
-  // 返金済み・一部返金済みを除外
-  return orders.filter(o => o.financial_status !== 'refunded' && o.financial_status !== 'partially_refunded');
+  // 返金済み・一部返金済み・返金保留中（refundsあり）を除外
+  return orders.filter(o =>
+    o.financial_status !== 'refunded' &&
+    o.financial_status !== 'partially_refunded' &&
+    !(o.refunds && o.refunds.length > 0)
+  );
 }
 
 // 日付形式変換: ISO 8601 → Shopify標準形式
