@@ -199,6 +199,12 @@ async function fetchAllOrders(start, end, fulfillment = 'any') {
   );
 }
 
+// 電話番号: +81 → 0 に変換
+function fmtPhone(p) {
+  if (!p) return '';
+  return String(p).replace(/^\+81/, '0').replace(/\s/g, '');
+}
+
 // 日付形式変換: ISO 8601 → Shopify標準形式
 function fmtDate(d) {
   if (!d) return '';
@@ -283,7 +289,7 @@ function generateCSV(orders) {
         isFirst ? (order.billing_address?.zip || '')                       : '',
         isFirst ? (order.billing_address?.province_code || '')             : '',
         isFirst ? (order.billing_address?.country_code || '')              : '',
-        isFirst ? (order.billing_address?.phone || '')                     : '',
+        isFirst ? fmtPhone(order.billing_address?.phone)                   : '',
         isFirst ? (order.shipping_address?.name || '')                     : '',
         isFirst ? joinAddr(order.shipping_address)                         : '',
         isFirst ? (order.shipping_address?.address1 || '')                 : '',
@@ -293,7 +299,7 @@ function generateCSV(orders) {
         isFirst ? (order.shipping_address?.zip || '')                      : '',
         isFirst ? (order.shipping_address?.province_code || '')            : '',
         isFirst ? (order.shipping_address?.country_code || '')             : '',
-        isFirst ? (order.shipping_address?.phone || '')                    : '',
+        isFirst ? fmtPhone(order.shipping_address?.phone)                  : '',
         isFirst ? (order.note || '')                                        : '',
         isFirst ? fmtNoteAttrs(order.note_attributes)                      : '',
         isFirst ? (order.cancelled_at || '')                                : '',
@@ -310,7 +316,7 @@ function generateCSV(orders) {
         // Tax columns（最大5件）
         ...getTaxColumns(isFirst ? order.tax_lines : []),
         // 追加列
-        isFirst ? (order.phone || '') : '',
+        isFirst ? fmtPhone(order.phone) : '',
         '',
         '',
         isFirst ? (JP_PROVINCE_NAMES[order.billing_address?.province_code] || order.billing_address?.province || '')  : '',
