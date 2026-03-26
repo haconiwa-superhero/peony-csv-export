@@ -173,8 +173,8 @@ async function fetchAllOrders(start, end, fulfillment = 'any') {
     `https://${shopDomain}/admin/api/2024-01/orders.json` +
     `?status=any` +
     `&fulfillment_status=${fulfillment}` +
-    `&created_at_min=${start}T00:00:00+09:00` +
-    `&created_at_max=${end}T23:59:59+09:00` +
+    `&created_at_min=${start}T00:00:00%2B09:00` +
+    `&created_at_max=${end}T23:59:59%2B09:00` +
     `&limit=250` +
     `&fields=id,name,email,financial_status,fulfillment_status,created_at,processed_at,` +
     `line_items,billing_address,shipping_address,note,subtotal_price,shipping_lines,` +
