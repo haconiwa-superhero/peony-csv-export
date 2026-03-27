@@ -477,11 +477,15 @@ async function initPouchInventory() {
       pouchInventoryItemId = found.inventory_item_id;
     }
 
-    const r2 = await fetch(`https://${shopDomain}/admin/api/2024-01/inventory_levels.json?inventory_item_ids=${pouchInventoryItemId}`, {
-      headers: { 'X-Shopify-Access-Token': accessToken }
-    });
-    const d2 = await r2.json();
-    pouchLocationId = d2.inventory_levels[0].location_id;
+    if (process.env.POUCH_LOCATION_ID) {
+      pouchLocationId = Number(process.env.POUCH_LOCATION_ID);
+    } else {
+      const r2 = await fetch(`https://${shopDomain}/admin/api/2024-01/inventory_levels.json?inventory_item_ids=${pouchInventoryItemId}`, {
+        headers: { 'X-Shopify-Access-Token': accessToken }
+      });
+      const d2 = await r2.json();
+      pouchLocationId = d2.inventory_levels[0].location_id;
+    }
     console.log(`✅ POUCH在庫初期化: item=${pouchInventoryItemId}, location=${pouchLocationId}`);
   } catch (e) { console.error('POUCH初期化エラー:', e); }
 }
