@@ -462,6 +462,7 @@ async function initPouchInventory() {
       headers: { 'X-Shopify-Access-Token': accessToken }
     });
     const d1 = await r1.json();
+    console.log('POUCH APIレスポンス:', JSON.stringify(d1).slice(0, 300));
     pouchInventoryItemId = d1.variants[0].inventory_item_id;
 
     const r2 = await fetch(`https://${shopDomain}/admin/api/2024-01/inventory_levels.json?inventory_item_ids=${pouchInventoryItemId}`, {
