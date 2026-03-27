@@ -92,10 +92,9 @@ app.post('/webhook/orders/paid', express.raw({ type: 'application/json' }), asyn
     if (!pouchInventoryItemId) await initPouchInventory();
     const newLevel = await adjustPouchInventory(-setQty);
     console.log(`注文 ${order.name}: POUCH在庫 -${setQty} → 残${newLevel}`);
-    if (newLevel <= 0) {
-      await updateSetInventory(0);
-      console.log('⚠️ POUCH在庫0: セット商品を売り切れに設定');
-    }
+    await updateSetInventory(Math.max(0, newLevel));
+    if (newLevel <= 0) console.log('⚠️ POUCH在庫0: セット商品を売り切れに設定');
+    else console.log(`✅ セット商品在庫を${newLevel}に同期`);
   } catch (e) { console.error('Webhook(paid)エラー:', e); }
 });
 
@@ -116,10 +115,8 @@ app.post('/webhook/orders/cancelled', express.raw({ type: 'application/json' }),
     if (!pouchInventoryItemId) await initPouchInventory();
     const newLevel = await adjustPouchInventory(setQty);
     console.log(`キャンセル ${order.name}: POUCH在庫 +${setQty} → 残${newLevel}`);
-    if (newLevel > 0) {
-      await updateSetInventory(999);
-      console.log('✅ キャンセル: セット商品の在庫を復元');
-    }
+    await updateSetInventory(Math.max(0, newLevel));
+    console.log(`✅ キャンセル: セット商品在庫を${newLevel}に同期`);
   } catch (e) { console.error('Webhook(cancelled)エラー:', e); }
 });
 
