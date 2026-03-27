@@ -92,9 +92,10 @@ app.post('/webhook/orders/paid', express.raw({ type: 'application/json' }), asyn
     if (!pouchInventoryItemId) await initPouchInventory();
     const newLevel = await adjustPouchInventory(-setQty);
     console.log(`注文 ${order.name}: POUCH在庫 -${setQty} → 残${newLevel}`);
-    await updateSetInventory(Math.max(0, newLevel));
-    if (newLevel <= 0) console.log('⚠️ POUCH在庫0: セット商品を売り切れに設定');
-    else console.log(`✅ セット商品在庫を${newLevel}に同期`);
+    if (newLevel <= 0) {
+      await updateSetInventory(0);
+      console.log('⚠️ POUCH在庫0: セット商品を売り切れに設定');
+    }
   } catch (e) { console.error('Webhook(paid)エラー:', e); }
 });
 
@@ -115,8 +116,6 @@ app.post('/webhook/orders/cancelled', express.raw({ type: 'application/json' }),
     if (!pouchInventoryItemId) await initPouchInventory();
     const newLevel = await adjustPouchInventory(setQty);
     console.log(`キャンセル ${order.name}: POUCH在庫 +${setQty} → 残${newLevel}`);
-    await updateSetInventory(Math.max(0, newLevel));
-    console.log(`✅ キャンセル: セット商品在庫を${newLevel}に同期`);
   } catch (e) { console.error('Webhook(cancelled)エラー:', e); }
 });
 
@@ -487,18 +486,24 @@ async function initPouchInventory() {
   } catch (e) { console.error('POUCH初期化エラー:', e); }
 }
 
-async function adjustPouchInventory(delta) {
-  const resp = await fetch(`https://${shopDomain}/admin/api/2024-01/inventory_levels/adjust.json`, {
-    method: 'POST',
-    headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ location_id: pouchLocationId, inventory_item_id: pouchInventoryItemId, available_adjustment: delta })
-  });
-  const data = await resp.json();
-  if (!data.inventory_level) {
-    console.error('在庫調整APIエラー:', JSON.stringify(data));
-    throw new Error('在庫調整失敗');
+async function adjustPouchInventory(delta, retry = 3) {
+  for (let i = 0; i < retry; i++) {
+    const resp = await fetch(`https://${shopDomain}/admin/api/2024-01/inventory_levels/adjust.json`, {
+      method: 'POST',
+      headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location_id: pouchLocationId, inventory_item_id: pouchInventoryItemId, available_adjustment: delta })
+    });
+    const data = await resp.json();
+    if (data.inventory_level) return data.inventory_level.available;
+    if (JSON.stringify(data).includes('Exceeded')) {
+      console.warn(`レート制限: ${i + 1}回目リトライ待機中...`);
+      await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+    } else {
+      console.error('在庫調整APIエラー:', JSON.stringify(data));
+      throw new Error('在庫調整失敗');
+    }
   }
-  return data.inventory_level.available;
+  throw new Error('在庫調整失敗（リトライ上限）');
 }
 
 async function updateSetInventory(available) {
