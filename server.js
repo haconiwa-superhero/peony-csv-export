@@ -21,8 +21,8 @@ const exportHistory = [];
 // ============================================================
 // 在庫連動: 商品ID定数
 // ============================================================
-const SET_PRODUCT_ID   = '8207210053689'; // THE MILKTEA WALTZ POUCH SET
-const POUCH_PRODUCT_ID = '8213925855289'; // HEART LACE POUCH（在庫カウンター）
+const SET_PRODUCT_ID = '8207210053689'; // THE MILKTEA WALTZ POUCH SET
+const POUCH_SKU      = 'LACE-HEARTPOUCH'; // HEART LACE POUCH（在庫カウンター）
 
 let pouchInventoryItemId = null;
 let pouchLocationId      = null;
@@ -458,12 +458,21 @@ function csvEscape(value) {
 // ============================================================
 async function initPouchInventory() {
   try {
-    const r1 = await fetch(`https://${shopDomain}/admin/api/2024-01/products/${POUCH_PRODUCT_ID}/variants.json`, {
-      headers: { 'X-Shopify-Access-Token': accessToken }
-    });
-    const d1 = await r1.json();
-    console.log('POUCH APIレスポンス:', JSON.stringify(d1).slice(0, 300));
-    pouchInventoryItemId = d1.variants[0].inventory_item_id;
+    // read_inventoryスコープのみでSKU検索（read_products不要）
+    let url = `https://${shopDomain}/admin/api/2024-01/inventory_items.json?limit=250`;
+    while (url) {
+      const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': accessToken } });
+      const d = await r.json();
+      const found = (d.inventory_items || []).find(i => i.sku === POUCH_SKU);
+      if (found) {
+        pouchInventoryItemId = found.id;
+        break;
+      }
+      const link = r.headers.get('link');
+      const next = link && link.match(/<([^>]+)>;\s*rel="next"/);
+      url = next ? next[1] : null;
+    }
+    if (!pouchInventoryItemId) throw new Error(`SKU "${POUCH_SKU}" が見つかりません`);
 
     const r2 = await fetch(`https://${shopDomain}/admin/api/2024-01/inventory_levels.json?inventory_item_ids=${pouchInventoryItemId}`, {
       headers: { 'X-Shopify-Access-Token': accessToken }
