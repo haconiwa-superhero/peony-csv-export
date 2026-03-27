@@ -458,21 +458,26 @@ function csvEscape(value) {
 // ============================================================
 async function initPouchInventory() {
   try {
-    // read_inventoryスコープのみでSKU検索（read_products不要）
-    let url = `https://${shopDomain}/admin/api/2024-01/inventory_items.json?limit=250`;
-    while (url) {
-      const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': accessToken } });
-      const d = await r.json();
-      const found = (d.inventory_items || []).find(i => i.sku === POUCH_SKU);
-      if (found) {
-        pouchInventoryItemId = found.id;
-        break;
+    // 環境変数で直接指定されている場合はそちらを優先
+    if (process.env.POUCH_INVENTORY_ITEM_ID) {
+      pouchInventoryItemId = Number(process.env.POUCH_INVENTORY_ITEM_ID);
+      console.log(`✅ POUCH inventory_item_id を環境変数から取得: ${pouchInventoryItemId}`);
+    } else {
+      // read_inventoryスコープのみでSKU検索（read_products不要）
+      let url = `https://${shopDomain}/admin/api/2024-01/inventory_items.json?limit=250`;
+      while (url) {
+        const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': accessToken } });
+        const d = await r.json();
+        const items = d.inventory_items || [];
+        console.log('在庫アイテムSKU一覧:', items.map(i => `${i.id}:${i.sku}`).join(', ').slice(0, 500));
+        const found = items.find(i => i.sku === POUCH_SKU);
+        if (found) { pouchInventoryItemId = found.id; break; }
+        const link = r.headers.get('link');
+        const next = link && link.match(/<([^>]+)>;\s*rel="next"/);
+        url = next ? next[1] : null;
       }
-      const link = r.headers.get('link');
-      const next = link && link.match(/<([^>]+)>;\s*rel="next"/);
-      url = next ? next[1] : null;
+      if (!pouchInventoryItemId) throw new Error(`SKU "${POUCH_SKU}" が見つかりません`);
     }
-    if (!pouchInventoryItemId) throw new Error(`SKU "${POUCH_SKU}" が見つかりません`);
 
     const r2 = await fetch(`https://${shopDomain}/admin/api/2024-01/inventory_levels.json?inventory_item_ids=${pouchInventoryItemId}`, {
       headers: { 'X-Shopify-Access-Token': accessToken }
