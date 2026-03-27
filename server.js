@@ -10,13 +10,22 @@ app.use(express.static('public'));
 const CLIENT_ID     = process.env.SHOPIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
 const HOST          = process.env.HOST;
-const SCOPES        = 'read_orders';
+const SCOPES        = 'read_orders,write_inventory,read_inventory';
 
 let shopDomain  = process.env.SHOPIFY_SHOP || '';
 let accessToken = process.env.SHOPIFY_ACCESS_TOKEN || '';
 
 // エクスポート履歴（最大100件、サーバー再起動でリセット）
 const exportHistory = [];
+
+// ============================================================
+// 在庫連動: 商品ID定数
+// ============================================================
+const SET_PRODUCT_ID   = '8207210053689'; // THE MILKTEA WALTZ POUCH SET
+const POUCH_PRODUCT_ID = '8213925855289'; // HEART LACE POUCH（在庫カウンター）
+
+let pouchInventoryItemId = null;
+let pouchLocationId      = null;
 
 // ============================================================
 // SKUマップ（管理画面から編集可能・サーバー再起動でリセット）
@@ -62,6 +71,56 @@ const SKU_MAP = {
   'MUSE OF ECLAT EYESHADOW 09': 'MOEE-09',
   'MUSE OF ECLAT EYESHADOW 10': 'MOEE-10',
 };
+
+// ============================================================
+// Webhook: 注文確定 → POUCH在庫を減らす
+// ============================================================
+app.post('/webhook/orders/paid', express.raw({ type: 'application/json' }), async (req, res) => {
+  res.status(200).send('OK');
+  try {
+    const hmac = req.headers['x-shopify-hmac-sha256'];
+    const hash = crypto.createHmac('sha256', CLIENT_SECRET).update(req.body).digest('base64');
+    if (hmac !== hash) return console.error('Webhook HMAC不一致 (orders/paid)');
+
+    const order = JSON.parse(req.body);
+    const setQty = order.line_items
+      .filter(i => String(i.product_id) === SET_PRODUCT_ID)
+      .reduce((sum, i) => sum + i.quantity, 0);
+    if (setQty === 0) return;
+
+    if (!pouchInventoryItemId) await initPouchInventory();
+    const newLevel = await adjustPouchInventory(-setQty);
+    console.log(`注文 ${order.name}: POUCH在庫 -${setQty} → 残${newLevel}`);
+    if (newLevel <= 0) {
+      await updateSetInventory(0);
+      console.log('⚠️ POUCH在庫0: セット商品を売り切れに設定');
+    }
+  } catch (e) { console.error('Webhook(paid)エラー:', e); }
+});
+
+// Webhook: 注文キャンセル → POUCH在庫を戻す
+app.post('/webhook/orders/cancelled', express.raw({ type: 'application/json' }), async (req, res) => {
+  res.status(200).send('OK');
+  try {
+    const hmac = req.headers['x-shopify-hmac-sha256'];
+    const hash = crypto.createHmac('sha256', CLIENT_SECRET).update(req.body).digest('base64');
+    if (hmac !== hash) return console.error('Webhook HMAC不一致 (orders/cancelled)');
+
+    const order = JSON.parse(req.body);
+    const setQty = order.line_items
+      .filter(i => String(i.product_id) === SET_PRODUCT_ID)
+      .reduce((sum, i) => sum + i.quantity, 0);
+    if (setQty === 0) return;
+
+    if (!pouchInventoryItemId) await initPouchInventory();
+    const newLevel = await adjustPouchInventory(setQty);
+    console.log(`キャンセル ${order.name}: POUCH在庫 +${setQty} → 残${newLevel}`);
+    if (newLevel > 0) {
+      await updateSetInventory(999);
+      console.log('✅ キャンセル: セット商品の在庫を復元');
+    }
+  } catch (e) { console.error('Webhook(cancelled)エラー:', e); }
+});
 
 app.use(express.json());
 
@@ -395,7 +454,78 @@ function csvEscape(value) {
 }
 
 // ============================================================
+// 在庫連動: ヘルパー関数
+// ============================================================
+async function initPouchInventory() {
+  try {
+    const r1 = await fetch(`https://${shopDomain}/admin/api/2024-01/products/${POUCH_PRODUCT_ID}/variants.json`, {
+      headers: { 'X-Shopify-Access-Token': accessToken }
+    });
+    const d1 = await r1.json();
+    pouchInventoryItemId = d1.variants[0].inventory_item_id;
+
+    const r2 = await fetch(`https://${shopDomain}/admin/api/2024-01/inventory_levels.json?inventory_item_ids=${pouchInventoryItemId}`, {
+      headers: { 'X-Shopify-Access-Token': accessToken }
+    });
+    const d2 = await r2.json();
+    pouchLocationId = d2.inventory_levels[0].location_id;
+    console.log(`✅ POUCH在庫初期化: item=${pouchInventoryItemId}, location=${pouchLocationId}`);
+  } catch (e) { console.error('POUCH初期化エラー:', e); }
+}
+
+async function adjustPouchInventory(delta) {
+  const resp = await fetch(`https://${shopDomain}/admin/api/2024-01/inventory_levels/adjust.json`, {
+    method: 'POST',
+    headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location_id: pouchLocationId, inventory_item_id: pouchInventoryItemId, available_adjustment: delta })
+  });
+  const data = await resp.json();
+  return data.inventory_level.available;
+}
+
+async function updateSetInventory(available) {
+  let url = `https://${shopDomain}/admin/api/2024-01/products/${SET_PRODUCT_ID}/variants.json?limit=250`;
+  while (url) {
+    const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': accessToken } });
+    const data = await resp.json();
+    for (const v of data.variants) {
+      await fetch(`https://${shopDomain}/admin/api/2024-01/inventory_levels/set.json`, {
+        method: 'POST',
+        headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location_id: pouchLocationId, inventory_item_id: v.inventory_item_id, available })
+      });
+    }
+    const link = resp.headers.get('link');
+    const next = link && link.match(/<([^>]+)>;\s*rel="next"/);
+    url = next ? next[1] : null;
+  }
+}
+
+async function registerWebhooks() {
+  const webhooks = [
+    { topic: 'orders/paid',      address: `${HOST}/webhook/orders/paid` },
+    { topic: 'orders/cancelled', address: `${HOST}/webhook/orders/cancelled` },
+  ];
+  for (const wh of webhooks) {
+    const resp = await fetch(`https://${shopDomain}/admin/api/2024-01/webhooks.json`, {
+      method: 'POST',
+      headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webhook: { topic: wh.topic, address: wh.address, format: 'json' } })
+    });
+    const data = await resp.json();
+    if (data.webhook) console.log(`✅ Webhook登録: ${wh.topic}`);
+    else console.log(`ℹ️ Webhook登録スキップ(既存): ${wh.topic}`, data.errors);
+  }
+}
+
+// ============================================================
 // サーバー起動
 // ============================================================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ サーバー起動: http://localhost:${PORT}`));
+app.listen(PORT, async () => {
+  console.log(`✅ サーバー起動: http://localhost:${PORT}`);
+  if (accessToken && shopDomain) {
+    await initPouchInventory();
+    await registerWebhooks();
+  }
+});
