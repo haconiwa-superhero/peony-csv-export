@@ -497,6 +497,10 @@ async function adjustPouchInventory(delta) {
     body: JSON.stringify({ location_id: pouchLocationId, inventory_item_id: pouchInventoryItemId, available_adjustment: delta })
   });
   const data = await resp.json();
+  if (!data.inventory_level) {
+    console.error('在庫調整APIエラー:', JSON.stringify(data));
+    throw new Error('在庫調整失敗');
+  }
   return data.inventory_level.available;
 }
 
