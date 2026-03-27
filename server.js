@@ -10,7 +10,7 @@ app.use(express.static('public'));
 const CLIENT_ID     = process.env.SHOPIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
 const HOST          = process.env.HOST;
-const SCOPES        = 'read_orders,write_inventory,read_inventory';
+const SCOPES        = 'read_orders,write_inventory,read_inventory,read_products';
 
 let shopDomain  = process.env.SHOPIFY_SHOP || '';
 let accessToken = process.env.SHOPIFY_ACCESS_TOKEN || '';
