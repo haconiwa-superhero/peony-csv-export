@@ -247,11 +247,13 @@ async function fetchAllOrders(start, end, fulfillment = 'any') {
     const next = link && link.match(/<([^>]+)>;\s*rel="next"/);
     url = next ? next[1] : null;
   }
-  // 返金済み・一部返金済み・返金保留中（refundsあり）を除外
+  // キャンセル済み・全額返金済み・支払いなし（voided/pending）を除外
+  // ※ 注文編集時にrefundsデータが生成されるShopify仕様のため、refundsの有無では判定しない
   return orders.filter(o =>
+    !o.cancelled_at &&
     o.financial_status !== 'refunded' &&
-    o.financial_status !== 'partially_refunded' &&
-    !(o.refunds && o.refunds.length > 0)
+    o.financial_status !== 'voided' &&
+    o.financial_status !== 'pending'
   );
 }
 
