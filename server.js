@@ -269,6 +269,15 @@ function fmtDate(d) {
   return d.replace('T', ' ').replace(/([+-]\d{2}):(\d{2})$/, ' $1$2');
 }
 
+// 氏名: Shopifyのname依存を避け、常に 姓 → 名 で組み立てる
+function fmtPersonName(address) {
+  if (!address) return '';
+  const last = String(address.last_name || '').trim();
+  const first = String(address.first_name || '').trim();
+  if (last || first) return [last, first].filter(Boolean).join(' ');
+  return String(address.name || '').trim();
+}
+
 // JP都道府県コード → 日本語名
 const JP_PROVINCE_NAMES = {
   'JP-01':'北海道','JP-02':'青森県','JP-03':'岩手県','JP-04':'宮城県','JP-05':'秋田県',
@@ -338,7 +347,7 @@ function generateCSV(orders) {
         item.requires_shipping ? 'true' : 'false',
         item.taxable ? 'true' : 'false',
         item.fulfillment_status || '',
-        isFirst ? (order.billing_address?.name || '')                      : '',
+        isFirst ? fmtPersonName(order.billing_address)                     : '',
         isFirst ? joinAddr(order.billing_address)                          : '',
         isFirst ? (order.billing_address?.address1 || '')                  : '',
         isFirst ? (order.billing_address?.address2 || '')                  : '',
@@ -348,7 +357,7 @@ function generateCSV(orders) {
         isFirst ? (order.billing_address?.province_code || '')             : '',
         isFirst ? (order.billing_address?.country_code || '')              : '',
         isFirst ? fmtPhone(order.billing_address?.phone)                   : '',
-        isFirst ? (order.shipping_address?.name || '')                     : '',
+        isFirst ? fmtPersonName(order.shipping_address)                    : '',
         isFirst ? joinAddr(order.shipping_address)                         : '',
         isFirst ? (order.shipping_address?.address1 || '')                 : '',
         isFirst ? (order.shipping_address?.address2 || '')                 : '',
