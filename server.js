@@ -22,6 +22,7 @@ const exportHistory = [];
 const processedPaidOrders      = new Set();
 const processedCancelledOrders = new Set();
 const processedRefunds         = new Set();
+const cancelledOrderIds        = new Set(); // キャンセル済み注文ID（返金の二重加算防止）
 function markProcessed(set, id) {
   if (set.has(id)) return false;
   set.add(id);
@@ -125,6 +126,9 @@ app.post('/webhook/orders/cancelled', express.raw({ type: 'application/json' }),
     if (!markProcessed(processedCancelledOrders, order.id)) {
       return console.log(`重複Webhook(cancelled)スキップ: ${order.name}`);
     }
+    cancelledOrderIds.add(order.id); // 返金Webhookでの二重加算防止のため記録
+    if (cancelledOrderIds.size > 1000) cancelledOrderIds.delete(cancelledOrderIds.values().next().value);
+
     const setQty = order.line_items
       .filter(i => String(i.product_id) === SET_PRODUCT_ID)
       .reduce((sum, i) => sum + i.quantity, 0);
@@ -147,6 +151,9 @@ app.post('/webhook/orders/refunds', express.raw({ type: 'application/json' }), a
     const refund = JSON.parse(req.body);
     if (!markProcessed(processedRefunds, refund.id)) {
       return console.log(`重複Webhook(refunds)スキップ: refund_id=${refund.id}`);
+    }
+    if (cancelledOrderIds.has(refund.order_id)) {
+      return console.log(`キャンセル注文の返金スキップ（二重加算防止）: order_id=${refund.order_id}`);
     }
     const setQty = (refund.refund_line_items || [])
       .filter(rli => String(rli.line_item?.product_id) === SET_PRODUCT_ID)
