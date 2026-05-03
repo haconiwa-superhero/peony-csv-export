@@ -403,30 +403,47 @@ function generateCSV(orders) {
 // バンドル商品のSKU展開
 // ① 注文プロパティに「XXX SKU」があればそれを使用
 // ② なければ商品名からSKUマップで解決
+// ※ 注文編集で削除・数量変更されたアイテムはrefundsから実効数量を算出して除外
 // ============================================================
+function getRefundedQuantities(order) {
+  const map = {};
+  for (const refund of (order.refunds || [])) {
+    for (const rli of (refund.refund_line_items || [])) {
+      map[rli.line_item_id] = (map[rli.line_item_id] || 0) + rli.quantity;
+    }
+  }
+  return map;
+}
+
 function expandLineItems(order) {
+  const refundedQty = getRefundedQuantities(order);
   const result = [];
   for (const item of order.line_items) {
+    // 削除・返金済みアイテムは実効数量を計算してスキップ
+    const effectiveQty = item.quantity - (refundedQty[item.id] || 0);
+    if (effectiveQty <= 0) continue;
+    const adjustedItem = { ...item, quantity: effectiveQty };
+
     // ① プロパティからSKUを取得
-    const skuProps = (item.properties || []).filter(p => p.name.endsWith(' SKU') && p.value);
+    const skuProps = (adjustedItem.properties || []).filter(p => p.name.endsWith(' SKU') && p.value);
     if (skuProps.length > 0) {
-      skuProps.forEach(prop => result.push({ ...item, sku: prop.value }));
+      skuProps.forEach(prop => result.push({ ...adjustedItem, sku: prop.value }));
       continue;
     }
 
     // ② 商品名からSKUマップで解決（フォールバック）
-    const name = item.name || '';
-    if (!item.sku && name.includes(' - ') && name.includes(' / ')) {
+    const name = adjustedItem.name || '';
+    if (!adjustedItem.sku && name.includes(' - ') && name.includes(' / ')) {
       const optPart   = name.slice(name.indexOf(' - ') + 3);
       const options   = optPart.split(' / ').map(o => o.trim());
       const skuValues = options.map(o => SKU_MAP[o] || SKU_MAP[o.toUpperCase()] || null).filter(Boolean);
       if (skuValues.length > 0) {
-        skuValues.forEach(sku => result.push({ ...item, sku }));
+        skuValues.forEach(sku => result.push({ ...adjustedItem, sku }));
         continue;
       }
     }
 
-    result.push(item);
+    result.push(adjustedItem);
   }
   return result;
 }
