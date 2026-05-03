@@ -18,6 +18,17 @@ let accessToken = process.env.SHOPIFY_ACCESS_TOKEN || '';
 // エクスポート履歴（最大100件、サーバー再起動でリセット）
 const exportHistory = [];
 
+// 重複Webhook防止（最大1000件、サーバー再起動でリセット）
+const processedPaidOrders      = new Set();
+const processedCancelledOrders = new Set();
+const processedRefunds         = new Set();
+function markProcessed(set, id) {
+  if (set.has(id)) return false;
+  set.add(id);
+  if (set.size > 1000) set.delete(set.values().next().value);
+  return true;
+}
+
 // ============================================================
 // 在庫連動: 商品ID定数
 // ============================================================
@@ -84,6 +95,9 @@ app.post('/webhook/orders/paid', express.raw({ type: 'application/json' }), asyn
     if (hmac !== hash) return console.error('Webhook HMAC不一致 (orders/paid)');
 
     const order = JSON.parse(req.body);
+    if (!markProcessed(processedPaidOrders, order.id)) {
+      return console.log(`重複Webhook(paid)スキップ: ${order.name}`);
+    }
     const setQty = order.line_items
       .filter(i => String(i.product_id) === SET_PRODUCT_ID)
       .reduce((sum, i) => sum + i.quantity, 0);
@@ -108,6 +122,9 @@ app.post('/webhook/orders/cancelled', express.raw({ type: 'application/json' }),
     if (hmac !== hash) return console.error('Webhook HMAC不一致 (orders/cancelled)');
 
     const order = JSON.parse(req.body);
+    if (!markProcessed(processedCancelledOrders, order.id)) {
+      return console.log(`重複Webhook(cancelled)スキップ: ${order.name}`);
+    }
     const setQty = order.line_items
       .filter(i => String(i.product_id) === SET_PRODUCT_ID)
       .reduce((sum, i) => sum + i.quantity, 0);
@@ -117,6 +134,29 @@ app.post('/webhook/orders/cancelled', express.raw({ type: 'application/json' }),
     const newLevel = await adjustPouchInventory(setQty);
     console.log(`キャンセル ${order.name}: POUCH在庫 +${setQty} → 残${newLevel}`);
   } catch (e) { console.error('Webhook(cancelled)エラー:', e); }
+});
+
+// Webhook: 返金 → POUCH在庫を戻す
+app.post('/webhook/orders/refunds', express.raw({ type: 'application/json' }), async (req, res) => {
+  res.status(200).send('OK');
+  try {
+    const hmac = req.headers['x-shopify-hmac-sha256'];
+    const hash = crypto.createHmac('sha256', CLIENT_SECRET).update(req.body).digest('base64');
+    if (hmac !== hash) return console.error('Webhook HMAC不一致 (orders/refunds)');
+
+    const refund = JSON.parse(req.body);
+    if (!markProcessed(processedRefunds, refund.id)) {
+      return console.log(`重複Webhook(refunds)スキップ: refund_id=${refund.id}`);
+    }
+    const setQty = (refund.refund_line_items || [])
+      .filter(rli => String(rli.line_item?.product_id) === SET_PRODUCT_ID)
+      .reduce((sum, rli) => sum + rli.quantity, 0);
+    if (setQty === 0) return;
+
+    if (!pouchInventoryItemId) await initPouchInventory();
+    const newLevel = await adjustPouchInventory(setQty);
+    console.log(`返金 (注文ID ${refund.order_id}): POUCH在庫 +${setQty} → 残${newLevel}`);
+  } catch (e) { console.error('Webhook(refunds)エラー:', e); }
 });
 
 app.use(express.json());
@@ -205,7 +245,8 @@ app.get('/export', async (req, res) => {
   try {
     const orders = await fetchAllOrders(start, end, fulfillment);
     const csv    = generateCSV(orders);
-    const encoded = iconv.encode(csv, 'CP932');
+    // サロゲートペア（絵文字等）はShift-JISで表現できないため除去してからエンコード
+    const encoded = iconv.encode(csv.replace(/[\uD800-\uDFFF]/g, ''), 'CP932');
 
     // 履歴を記録
     exportHistory.unshift({ timestamp: new Date().toISOString(), start, end, fulfillment, count: orders.length });
@@ -328,15 +369,15 @@ function generateCSV(orders) {
         isFirst ? (order.financial_status || '')                            : '',
         isFirst ? fmtDate(order.processed_at)                              : '',
         isFirst ? (order.fulfillment_status || '')                          : '',
-        isFirst ? fmtDate(order.fulfillments?.[0]?.updated_at)             : '',
+        isFirst ? fmtDate(order.fulfillments?.[order.fulfillments.length - 1]?.updated_at) : '',
         isFirst ? (order.customer?.accepts_marketing ? 'yes' : 'no')       : '',
         isFirst ? (order.currency || '')                                    : '',
         isFirst ? (order.subtotal_price || '')                              : '',
         isFirst ? (order.total_shipping_price_set?.shop_money?.amount || '0') : '',
         isFirst ? (order.total_tax || '')                                   : '',
         isFirst ? (order.total_price || '')                                 : '',
-        isFirst ? (order.discount_codes?.[0]?.code || '')                  : '',
-        isFirst ? (order.discount_codes?.[0]?.amount || '0')               : '',
+        isFirst ? (order.discount_codes?.map(d => d.code).join(' / ') || '')        : '',
+        isFirst ? (order.discount_codes?.map(d => d.amount).join(' / ') || '0')   : '',
         isFirst ? (order.shipping_lines?.[0]?.title || '')                 : '',
         fmtDate(order.created_at),
         item.quantity,
@@ -556,6 +597,7 @@ async function registerWebhooks() {
   const webhooks = [
     { topic: 'orders/paid',      address: `${HOST}/webhook/orders/paid` },
     { topic: 'orders/cancelled', address: `${HOST}/webhook/orders/cancelled` },
+    { topic: 'refunds/create',   address: `${HOST}/webhook/orders/refunds` },
   ];
   for (const wh of webhooks) {
     const resp = await fetch(`https://${shopDomain}/admin/api/2024-01/webhooks.json`, {
