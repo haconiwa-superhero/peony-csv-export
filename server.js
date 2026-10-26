@@ -276,9 +276,8 @@ app.get('/auth/callback', async (req, res) => {
 
   console.log('\n========================================');
   console.log('✅ アクセストークン取得成功!');
-  console.log(`SHOPIFY_ACCESS_TOKEN=${accessToken}`);
   console.log(`SHOPIFY_SHOP=${shop}`);
-  console.log('RenderのEnvironmentに上記を設定してください');
+  console.log('アクセストークンはセキュリティ上、ログには表示しません');
   console.log('========================================\n');
 
   res.redirect('/');
