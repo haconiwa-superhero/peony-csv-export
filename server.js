@@ -3,6 +3,10 @@ const express = require('express');
 const crypto  = require('crypto');
 const fetch   = require('node-fetch');
 const iconv   = require('iconv-lite');
+const path    = require('path');
+const { evaluateInventoryChange, normalizeThresholds } = require('./lib/inventory-alerts');
+const { InventoryAlertStore } = require('./lib/inventory-alert-store');
+const { buildInventoryAlertEmail, sendInventoryEmail } = require('./lib/inventory-email');
 
 const app = express();
 app.use(express.static('public'));
@@ -14,6 +18,18 @@ const SCOPES        = 'read_orders,write_inventory,read_inventory,read_products'
 
 let shopDomain  = process.env.SHOPIFY_SHOP || '';
 let accessToken = process.env.SHOPIFY_ACCESS_TOKEN || '';
+
+const POUCH_SYNC_ENABLED = process.env.POUCH_SYNC_ENABLED !== 'false';
+const INVENTORY_ALERTS_ENABLED = process.env.INVENTORY_ALERTS_ENABLED === 'true';
+const INVENTORY_ALERTS_DRY_RUN = process.env.INVENTORY_ALERTS_DRY_RUN !== 'false';
+const REGISTER_WEBHOOKS_ENABLED = process.env.REGISTER_WEBHOOKS_ENABLED !== 'false';
+const INVENTORY_ALERT_THRESHOLDS = normalizeThresholds(process.env.INVENTORY_ALERT_THRESHOLDS || '500,300,100,50,0');
+const INVENTORY_ALERT_RECIPIENT = process.env.INVENTORY_ALERT_RECIPIENT || 'admin@ivycorp.org';
+const INVENTORY_ALERT_DEBOUNCE_MS = Number(process.env.INVENTORY_ALERT_DEBOUNCE_MS || 30000);
+const inventoryAlertStore = new InventoryAlertStore(
+  process.env.INVENTORY_ALERT_STATE_FILE || path.join(__dirname, 'data', 'inventory-alert-state.json')
+);
+const pendingInventoryAlerts = new Map();
 
 // エクスポート履歴（最大100件、サーバー再起動でリセット）
 const exportHistory = [];
@@ -166,6 +182,31 @@ app.post('/webhook/orders/refunds', express.raw({ type: 'application/json' }), a
   } catch (e) { console.error('Webhook(refunds)エラー:', e); }
 });
 
+// ============================================================
+// Webhook: 在庫更新 → 基準値を下回った場合にメール通知
+// 初回観測時は現在値を記録するだけで、既存在庫への一斉通知は行わない。
+// ============================================================
+app.post('/webhook/inventory-levels-update', express.raw({ type: 'application/json' }), (req, res) => {
+  res.status(200).send('OK');
+  if (!INVENTORY_ALERTS_ENABLED) return;
+
+  try {
+    const hmac = req.headers['x-shopify-hmac-sha256'];
+    const hash = crypto.createHmac('sha256', CLIENT_SECRET).update(req.body).digest('base64');
+    if (hmac !== hash) return console.error('Webhook HMAC不一致 (inventory_levels/update)');
+
+    const payload = JSON.parse(req.body);
+    const webhookShop = req.headers['x-shopify-shop-domain'] || shopDomain;
+    scheduleInventoryAlert({
+      shop: webhookShop,
+      inventoryItemId: String(payload.inventory_item_id),
+      locationId: String(payload.location_id),
+    });
+  } catch (error) {
+    console.error('Webhook(inventory_levels/update)エラー:', error);
+  }
+});
+
 app.use(express.json());
 
 // ============================================================
@@ -187,6 +228,16 @@ app.get('/preview', async (req, res) => {
 // ⑤ エクスポート履歴
 // ============================================================
 app.get('/api/history', (_req, res) => res.json(exportHistory));
+
+app.get('/api/inventory-alerts/status', (_req, res) => {
+  res.json({
+    enabled: INVENTORY_ALERTS_ENABLED,
+    dryRun: INVENTORY_ALERTS_DRY_RUN,
+    thresholds: INVENTORY_ALERT_THRESHOLDS,
+    trackedItems: Object.keys(inventoryAlertStore.state.items).length,
+    pendingItems: pendingInventoryAlerts.size,
+  });
+});
 
 // ============================================================
 // OAuth: Step1 - Shopify認証ページへリダイレクト
@@ -527,6 +578,125 @@ function csvEscape(value) {
 }
 
 // ============================================================
+// 在庫通知: デバウンス・商品情報取得・通知判定
+// ============================================================
+function scheduleInventoryAlert(event) {
+  const key = `${event.shop}:${event.inventoryItemId}`;
+  const existing = pendingInventoryAlerts.get(key);
+  if (existing) clearTimeout(existing.timer);
+
+  const timer = setTimeout(async () => {
+    pendingInventoryAlerts.delete(key);
+    try {
+      await processInventoryAlert(event);
+    } catch (error) {
+      console.error(`在庫通知処理エラー item=${event.inventoryItemId}:`, error);
+    }
+  }, Math.max(0, INVENTORY_ALERT_DEBOUNCE_MS));
+  pendingInventoryAlerts.set(key, { ...event, timer });
+}
+
+async function shopifyGraphql(query, variables) {
+  const response = await fetch(`https://${shopDomain}/admin/api/2026-10/graphql.json`, {
+    method: 'POST',
+    headers: {
+      'X-Shopify-Access-Token': accessToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  const body = await response.json();
+  if (!response.ok || body.errors) {
+    throw new Error(`Shopify GraphQL error: ${response.status} ${JSON.stringify(body.errors || body)}`);
+  }
+  return body.data;
+}
+
+async function fetchInventoryAlertContext(inventoryItemId) {
+  const gid = inventoryItemId.startsWith('gid://')
+    ? inventoryItemId
+    : `gid://shopify/InventoryItem/${inventoryItemId}`;
+  const data = await shopifyGraphql(`
+    query InventoryAlertItem($id: ID!) {
+      inventoryItem(id: $id) {
+        id
+        sku
+        tracked
+        variant {
+          id
+          title
+          product { id legacyResourceId title handle status }
+        }
+        inventoryLevels(first: 100) {
+          nodes { quantities(names: ["available"]) { name quantity } location { id name } }
+        }
+      }
+    }
+  `, { id: gid });
+  const item = data.inventoryItem;
+  if (!item || !item.variant || !item.tracked) return null;
+
+  const currentQuantity = item.inventoryLevels.nodes.reduce((total, level) => {
+    const available = level.quantities.find(quantity => quantity.name === 'available');
+    return total + (available?.quantity || 0);
+  }, 0);
+  return {
+    inventoryItemId: item.id,
+    sku: item.sku || '',
+    variantId: item.variant.id,
+    variantTitle: item.variant.title,
+    productTitle: item.variant.product.title,
+    productHandle: item.variant.product.handle,
+    productStatus: item.variant.product.status,
+    currentQuantity,
+    adminUrl: `https://admin.shopify.com/store/${shopDomain.replace('.myshopify.com', '')}/products/${item.variant.product.legacyResourceId}`,
+  };
+}
+
+async function processInventoryAlert(event) {
+  if (event.shop !== shopDomain) {
+    console.warn(`対象外ストアの在庫Webhookをスキップ: ${event.shop}`);
+    return;
+  }
+  const item = await fetchInventoryAlertContext(event.inventoryItemId);
+  if (!item) return;
+
+  const stateKey = `${event.shop}:${item.inventoryItemId}`;
+  const previous = inventoryAlertStore.get(stateKey);
+  const decision = evaluateInventoryChange({
+    previousQuantity: previous?.quantity,
+    currentQuantity: item.currentQuantity,
+    thresholds: INVENTORY_ALERT_THRESHOLDS,
+  });
+
+  if (decision.action === 'notify') {
+    const email = buildInventoryAlertEmail({
+      item,
+      threshold: decision.threshold,
+      currentQuantity: item.currentQuantity,
+      shop: event.shop,
+    });
+    await sendInventoryEmail({
+      apiKey: process.env.RESEND_API_KEY,
+      from: process.env.INVENTORY_ALERT_FROM,
+      to: INVENTORY_ALERT_RECIPIENT,
+      email,
+      dryRun: INVENTORY_ALERTS_DRY_RUN,
+    });
+  }
+
+  await inventoryAlertStore.set(stateKey, {
+    quantity: item.currentQuantity,
+    sku: item.sku,
+    productTitle: item.productTitle,
+    variantTitle: item.variantTitle,
+    lastAction: decision.action,
+    lastThreshold: decision.threshold ?? null,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+// ============================================================
 // 在庫連動: ヘルパー関数
 // ============================================================
 async function initPouchInventory() {
@@ -601,11 +771,17 @@ async function updateSetInventory(available) {
 }
 
 async function registerWebhooks() {
-  const webhooks = [
-    { topic: 'orders/paid',      address: `${HOST}/webhook/orders/paid` },
-    { topic: 'orders/cancelled', address: `${HOST}/webhook/orders/cancelled` },
-    { topic: 'refunds/create',   address: `${HOST}/webhook/orders/refunds` },
-  ];
+  const webhooks = [];
+  if (POUCH_SYNC_ENABLED) {
+    webhooks.push(
+      { topic: 'orders/paid',      address: `${HOST}/webhook/orders/paid` },
+      { topic: 'orders/cancelled', address: `${HOST}/webhook/orders/cancelled` },
+      { topic: 'refunds/create',   address: `${HOST}/webhook/orders/refunds` },
+    );
+  }
+  if (INVENTORY_ALERTS_ENABLED) {
+    webhooks.push({ topic: 'inventory_levels/update', address: `${HOST}/webhook/inventory-levels-update` });
+  }
   for (const wh of webhooks) {
     const resp = await fetch(`https://${shopDomain}/admin/api/2024-01/webhooks.json`, {
       method: 'POST',
@@ -625,7 +801,8 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`✅ サーバー起動: http://localhost:${PORT}`);
   if (accessToken && shopDomain) {
-    await initPouchInventory();
-    await registerWebhooks();
+    await inventoryAlertStore.load();
+    if (POUCH_SYNC_ENABLED) await initPouchInventory();
+    if (REGISTER_WEBHOOKS_ENABLED) await registerWebhooks();
   }
 });
