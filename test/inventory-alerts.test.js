@@ -2,8 +2,12 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const { evaluateInventoryChange, normalizeThresholds } = require('../lib/inventory-alerts');
 const { buildInventoryAlertEmail } = require('../lib/inventory-email');
+const { InventoryAlertStore } = require('../lib/inventory-alert-store');
 
 const thresholds = [500, 300, 100, 50, 0];
 
@@ -46,4 +50,19 @@ test('通知メールに商品・種類・SKU・現在数・基準値を含め�
     shop: 'example.myshopify.com',
   });
   assert.match(email.text, /商品Aの在庫が通知基準を下回りました。\nカラー・種類: PINK\nSKU: A-PINK\n現在の在庫数: 40\n通知基準: 50以下/);
+});
+
+test('初期基準値を複数件まとめて永続化できる', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'inventory-alert-store-'));
+  const file = path.join(directory, 'state.json');
+  const store = new InventoryAlertStore(file);
+  await store.setMany([
+    ['shop:item-1', { quantity: 600 }],
+    ['shop:item-2', { quantity: 40 }],
+  ]);
+
+  const reloaded = new InventoryAlertStore(file);
+  await reloaded.load();
+  assert.equal(reloaded.get('shop:item-1').quantity, 600);
+  assert.equal(reloaded.get('shop:item-2').quantity, 40);
 });

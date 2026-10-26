@@ -696,6 +696,60 @@ async function processInventoryAlert(event) {
   });
 }
 
+async function initializeInventoryAlertState() {
+  let cursor = null;
+  let initialized = 0;
+
+  do {
+    const data = await shopifyGraphql(`
+      query InventoryAlertBaseline($cursor: String) {
+        inventoryItems(first: 250, after: $cursor) {
+          nodes {
+            id
+            sku
+            tracked
+            variant { title product { title } }
+            inventoryLevels(first: 100) {
+              nodes { quantities(names: ["available"]) { name quantity } }
+            }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    `, { cursor });
+
+    const entries = [];
+    for (const item of data.inventoryItems.nodes) {
+      if (!item.tracked || !item.variant) continue;
+      const key = `${shopDomain}:${item.id}`;
+      if (inventoryAlertStore.get(key)) continue;
+      const quantity = item.inventoryLevels.nodes.reduce((total, level) => {
+        const available = level.quantities.find(value => value.name === 'available');
+        return total + (available?.quantity || 0);
+      }, 0);
+      entries.push([key, {
+        quantity,
+        sku: item.sku || '',
+        productTitle: item.variant.product.title,
+        variantTitle: item.variant.title,
+        lastAction: 'initialize',
+        lastThreshold: null,
+        updatedAt: new Date().toISOString(),
+      }]);
+    }
+    if (entries.length) {
+      await inventoryAlertStore.setMany(entries);
+      initialized += entries.length;
+    }
+
+    cursor = data.inventoryItems.pageInfo.hasNextPage
+      ? data.inventoryItems.pageInfo.endCursor
+      : null;
+  } while (cursor);
+
+  console.log(`在庫通知の初期基準値を準備: ${initialized}件を追加`);
+}
+
 // ============================================================
 // 在庫連動: ヘルパー関数
 // ============================================================
@@ -803,6 +857,7 @@ app.listen(PORT, async () => {
   if (accessToken && shopDomain) {
     await inventoryAlertStore.load();
     if (POUCH_SYNC_ENABLED) await initPouchInventory();
+    if (INVENTORY_ALERTS_ENABLED) await initializeInventoryAlertState();
     if (REGISTER_WEBHOOKS_ENABLED) await registerWebhooks();
   }
 });
